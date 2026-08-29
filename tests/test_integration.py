@@ -38,6 +38,8 @@ CHEAP_GOE_PV_SWITCH_ENTITY = "switch.goe_wan_213832_fup"
 CHEAP_PRICE_EXPENSIVE = "26.667"
 CHEAP_PRICE_CHEAP = "16.667"
 
+TESLA_SWITCH_ENTITY = "switch.tesla_aufladung"
+
 DEVICE_SLUG = "go_e_solar_charger"
 
 
@@ -56,11 +58,14 @@ async def _make_entry(hass, **overrides):
         "pv_battery_entity_id": PV_BATTERY_ENTITY,
         "pv_soc_entity_id": PV_SOC_ENTITY,
         "pv_default_threshold": 50,
+        "pv_export_override_threshold_w": 3100,
         "cheap_forecast_entity_id": CHEAP_FORECAST_ENTITY,
         "cheap_price_entity_id": CHEAP_PRICE_ENTITY,
         "cheap_goe_pv_switch_entity_id": CHEAP_GOE_PV_SWITCH_ENTITY,
         "cheap_forecast_threshold_kwh": 30,
         "cheap_price_threshold_ct": 20,
+        "tesla_switch_entity_id": TESLA_SWITCH_ENTITY,
+        "tesla_grid_release_threshold_w": 1400,
     }
     data.update(overrides)
     entry = MockConfigEntry(domain=DOMAIN, data=data, title="go-e Solar Charger")
@@ -506,4 +511,182 @@ async def test_cheap_not_configured_is_inert(hass, enable_custom_integrations):
         assert _state(hass, f"sensor.{DEVICE_SLUG}_guenstigstrom_status") == (
             'Nicht konfiguriert - bitte unter "Konfigurieren" Solar-Vorhersage, '
             "Strompreis und go-e-PV-Schalter angeben."
+        )
+
+
+@pytest.mark.asyncio
+async def test_pv_export_override_pushes_despite_low_soc(hass, enable_custom_integrations):
+    """The Powerwall itself sometimes exports a lot even while below its
+    own SoC threshold (e.g. around midday in summer) - once that export
+    crosses the override threshold, real values must go to go-e anyway
+    instead of the zeroed safety values."""
+    hass.states.async_set(ZOE_SOC_ENTITY, "50")
+    hass.states.async_set(ZOE_CHARGING_ENTITY, "off")
+    hass.states.async_set(ZOE_CONNECTED_ENTITY, "off")
+
+    hass.states.async_set(PV_SOC_ENTITY, "30")  # below the 50 % threshold
+    hass.states.async_set(PV_SOLAR_ENTITY, "3500")
+    hass.states.async_set(PV_GRID_ENTITY, "-3500")  # exporting 3500 W > 3100 W override
+    hass.states.async_set(PV_BATTERY_ENTITY, "-500")
+
+    with patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.stop_charging",
+        new=AsyncMock(),
+    ), patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.release",
+        new=AsyncMock(),
+    ), patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.push_pv_values",
+        new=AsyncMock(),
+    ) as mock_push, patch(
+        "custom_components.go_e_solar_charger.tesla_controller.TeslaChargingController._set_tesla_switch",
+        new=AsyncMock(),
+    ):
+        entry = await _make_entry(hass)
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+        assert (
+            hass.states.get(f"number.{DEVICE_SLUG}_pv_sofort_freigabe_ab_einspeisung")
+            is not None
+        )
+
+        # below threshold, but exporting well above the override -> real
+        # values sent anyway.
+        assert mock_push.call_args.args[0] == {"pPv": 3500.0, "pGrid": -3500.0, "pAkku": -500.0}
+        assert "trotzdem gesendet" in _state(hass, f"sensor.{DEVICE_SLUG}_pv_freigabe_status")
+
+        # export drops back below the override, still below SoC threshold
+        # -> back to the zeroed safety values.
+        hass.states.async_set(PV_GRID_ENTITY, "-1000")
+        await hass.async_block_till_done()
+        assert mock_push.call_args.args[0] == {"pPv": 0, "pGrid": 0, "pAkku": 0}
+
+        # raising the override threshold itself also takes effect
+        # immediately, same as the other number entities.
+        hass.states.async_set(PV_GRID_ENTITY, "-3500")
+        await hass.async_block_till_done()
+        assert mock_push.call_args.args[0] == {"pPv": 3500.0, "pGrid": -3500.0, "pAkku": -500.0}
+
+        await hass.services.async_call(
+            "number",
+            "set_value",
+            {
+                "entity_id": f"number.{DEVICE_SLUG}_pv_sofort_freigabe_ab_einspeisung",
+                "value": 4000,
+            },
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+        assert mock_push.call_args.args[0] == {"pPv": 0, "pGrid": 0, "pAkku": 0}
+
+
+@pytest.mark.asyncio
+async def test_tesla_charging_follows_powerwall_soc_and_grid_export(
+    hass, enable_custom_integrations
+):
+    """The Tesla's own charging switch should stay off while the Powerwall
+    is below its (shared, live) SoC threshold, unless enough power is
+    already going into the grid to be worth using regardless - and come
+    back on once the Powerwall itself reaches that threshold."""
+    hass.states.async_set(ZOE_SOC_ENTITY, "50")
+    hass.states.async_set(ZOE_CHARGING_ENTITY, "off")
+    hass.states.async_set(ZOE_CONNECTED_ENTITY, "off")
+
+    hass.states.async_set(PV_SOC_ENTITY, "30")  # below the 50 % threshold
+    hass.states.async_set(PV_SOLAR_ENTITY, "0")
+    hass.states.async_set(PV_GRID_ENTITY, "-200")  # exporting, but below the 1400 W release
+    hass.states.async_set(PV_BATTERY_ENTITY, "0")
+
+    with patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.stop_charging",
+        new=AsyncMock(),
+    ), patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.release",
+        new=AsyncMock(),
+    ), patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.push_pv_values",
+        new=AsyncMock(),
+    ), patch(
+        "custom_components.go_e_solar_charger.tesla_controller.TeslaChargingController._set_tesla_switch",
+        new=AsyncMock(),
+    ) as mock_set_tesla:
+        entry = await _make_entry(hass)
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+        assert hass.states.get(f"number.{DEVICE_SLUG}_tesla_netz_freigabe") is not None
+        assert (
+            hass.states.get(f"switch.{DEVICE_SLUG}_tesla_ladesteuerung_aktiviert") is not None
+        )
+        assert hass.states.get(f"sensor.{DEVICE_SLUG}_tesla_ladesteuerung_status") is not None
+        assert hass.states.get(f"button.{DEVICE_SLUG}_tesla_jetzt_pruefen") is not None
+
+        # below SoC threshold, not enough export -> stopped.
+        assert mock_set_tesla.call_args.args == (False,)
+        assert "gestoppt" in _state(hass, f"sensor.{DEVICE_SLUG}_tesla_ladesteuerung_status")
+
+        # export rises above the 1400 W release threshold -> released,
+        # even though the Powerwall SoC is still below its own threshold.
+        hass.states.async_set(PV_GRID_ENTITY, "-1500")
+        await hass.async_block_till_done()
+        assert mock_set_tesla.call_args.args == (True,)
+        assert "freigegeben" in _state(hass, f"sensor.{DEVICE_SLUG}_tesla_ladesteuerung_status")
+
+        # export drops again, but the Powerwall itself now reached the
+        # threshold -> stays released via the SoC condition instead.
+        calls_before = mock_set_tesla.call_count
+        hass.states.async_set(PV_GRID_ENTITY, "-200")
+        hass.states.async_set(PV_SOC_ENTITY, "60")
+        await hass.async_block_till_done()
+        assert mock_set_tesla.call_args.args == (True,)
+        assert mock_set_tesla.call_count == calls_before  # no redundant call, already True
+
+        # SoC drops back below threshold with low export -> stopped again.
+        hass.states.async_set(PV_SOC_ENTITY, "30")
+        await hass.async_block_till_done()
+        assert mock_set_tesla.call_args.args == (False,)
+
+        # disabling the feature while it has the Tesla stopped hands
+        # control back immediately instead of leaving it stuck off.
+        await hass.services.async_call(
+            "switch",
+            "turn_off",
+            {"entity_id": f"switch.{DEVICE_SLUG}_tesla_ladesteuerung_aktiviert"},
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+        assert mock_set_tesla.call_args.args == (True,)
+        assert _state(hass, f"sensor.{DEVICE_SLUG}_tesla_ladesteuerung_status") == "Deaktiviert"
+
+
+@pytest.mark.asyncio
+async def test_tesla_not_configured_is_inert(hass, enable_custom_integrations):
+    """An entry created before this feature existed (or one where it was
+    deliberately left blank) won't have tesla_switch_entity_id - setup
+    must not crash, the feature just stays inert."""
+    hass.states.async_set(ZOE_SOC_ENTITY, "50")
+    hass.states.async_set(ZOE_CHARGING_ENTITY, "off")
+    hass.states.async_set(ZOE_CONNECTED_ENTITY, "off")
+    hass.states.async_set(PV_SOC_ENTITY, "10")
+    hass.states.async_set(PV_SOLAR_ENTITY, "0")
+    hass.states.async_set(PV_GRID_ENTITY, "0")
+    hass.states.async_set(PV_BATTERY_ENTITY, "0")
+
+    with patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.stop_charging",
+        new=AsyncMock(),
+    ), patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.release",
+        new=AsyncMock(),
+    ), patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.push_pv_values",
+        new=AsyncMock(),
+    ):
+        entry = await _make_entry(hass, tesla_switch_entity_id=None)
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+        assert _state(hass, f"sensor.{DEVICE_SLUG}_tesla_ladesteuerung_status") == (
+            'Nicht konfiguriert - bitte unter "Konfigurieren" den Tesla-Lade-Schalter angeben.'
         )

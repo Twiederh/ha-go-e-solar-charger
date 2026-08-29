@@ -23,13 +23,14 @@
       },
       "pv": {
         "title": "PV-Ueberschuss-Freigabe",
-        "description": "Sensoren der Powerwall fuer Solar-, Netz- und Batterieleistung sowie den Akkustand. Die Werte werden erst an den go-e weitergegeben, wenn der Akkustand die Schwelle erreicht.",
+        "description": "Sensoren der Powerwall fuer Solar-, Netz- und Batterieleistung sowie den Akkustand. Die Werte werden erst an den go-e weitergegeben, wenn der Akkustand die Schwelle erreicht - oder wenn die Einspeisung trotzdem schon die Sofort-Freigabe-Schwelle ueberschreitet (z. B. mittags im Sommer, wenn die Powerwall selbst exportiert, um nicht zu lange bei 100 % zu stehen).",
         "data": {
           "pv_solar_entity_id": "Sensor: Solarleistung (W)",
           "pv_grid_entity_id": "Sensor: Netzleistung (W)",
           "pv_battery_entity_id": "Sensor: Batterieleistung der Powerwall (W)",
           "pv_soc_entity_id": "Sensor: Akkustand der Powerwall (%)",
-          "pv_default_threshold": "PV-Freigabe ab Akkustand (%)"
+          "pv_default_threshold": "PV-Freigabe ab Akkustand (%)",
+          "pv_export_override_threshold_w": "PV Sofort-Freigabe ab Einspeisung (W)"
         }
       },
       "cheap": {
@@ -41,6 +42,14 @@
           "cheap_goe_pv_switch_entity_id": "Schalter: PV-Ueberschussladen am go-e selbst",
           "cheap_forecast_threshold_kwh": "Vorhersage-Schwelle (kWh)",
           "cheap_price_threshold_ct": "Preis-Schwelle (ct)"
+        }
+      },
+      "tesla": {
+        "title": "Tesla-Ladesteuerung",
+        "description": "Optional: startet/stoppt das Laden eines zweiten Fahrzeugs (z. B. Tesla) ueber einen einfachen Schalter, sobald die Powerwall unter der oben in \"PV-Ueberschuss-Freigabe\" eingestellten Mindestladung liegt - ausser es wird bereits genug ins Netz eingespeist. Das Fahrzeug regelt sein eigenes Ladelimit selbst. Feld leer lassen, um dieses Feature (vorerst) nicht zu nutzen.",
+        "data": {
+          "tesla_switch_entity_id": "Schalter: Laden des Fahrzeugs (z. B. switch.tesla_aufladung)",
+          "tesla_grid_release_threshold_w": "Laden trotzdem freigeben ab Einspeisung (W)"
         }
       }
     }
@@ -72,7 +81,8 @@
           "pv_grid_entity_id": "Sensor: Netzleistung (W)",
           "pv_battery_entity_id": "Sensor: Batterieleistung der Powerwall (W)",
           "pv_soc_entity_id": "Sensor: Akkustand der Powerwall (%)",
-          "pv_default_threshold": "PV-Freigabe ab Akkustand (%)"
+          "pv_default_threshold": "PV-Freigabe ab Akkustand (%)",
+          "pv_export_override_threshold_w": "PV Sofort-Freigabe ab Einspeisung (W)"
         }
       },
       "cheap": {
@@ -83,6 +93,13 @@
           "cheap_goe_pv_switch_entity_id": "Schalter: PV-Ueberschussladen am go-e selbst",
           "cheap_forecast_threshold_kwh": "Vorhersage-Schwelle (kWh)",
           "cheap_price_threshold_ct": "Preis-Schwelle (ct)"
+        }
+      },
+      "tesla": {
+        "title": "Tesla-Ladesteuerung",
+        "data": {
+          "tesla_switch_entity_id": "Schalter: Laden des Fahrzeugs (z. B. switch.tesla_aufladung)",
+          "tesla_grid_release_threshold_w": "Laden trotzdem freigeben ab Einspeisung (W)"
         }
       }
     }

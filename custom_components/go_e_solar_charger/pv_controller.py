@@ -17,9 +17,11 @@ from .const import (
     CONF_GOE_HOST,
     CONF_PV_BATTERY_ENTITY,
     CONF_PV_DEFAULT_THRESHOLD,
+    CONF_PV_EXPORT_OVERRIDE_THRESHOLD,
     CONF_PV_GRID_ENTITY,
     CONF_PV_SOC_ENTITY,
     CONF_PV_SOLAR_ENTITY,
+    DEFAULT_PV_EXPORT_OVERRIDE_THRESHOLD,
     DEFAULT_PV_THRESHOLD,
     PV_PUSH_KEEPALIVE_INTERVAL_SECONDS,
     SIGNAL_PV_STATUS_UPDATE,
@@ -51,6 +53,9 @@ class PvSurplusController:
         # Set from restored entity state right after platform setup, before
         # async_setup() runs its first evaluation - see __init__.py.
         self.threshold: float = config.get(CONF_PV_DEFAULT_THRESHOLD, DEFAULT_PV_THRESHOLD)
+        self.export_override_w: float = config.get(
+            CONF_PV_EXPORT_OVERRIDE_THRESHOLD, DEFAULT_PV_EXPORT_OVERRIDE_THRESHOLD
+        )
         self.enabled: bool = True
         self.status_text: str = "Initialisiere ..."
 
@@ -121,6 +126,7 @@ class PvSurplusController:
                 solar_w=self._read_float(self._solar_entity),
                 grid_w=self._read_float(self._grid_entity),
                 battery_w=self._read_float(self._battery_entity),
+                export_override_w=self.export_override_w,
             )
         )
 
@@ -139,6 +145,10 @@ class PvSurplusController:
 
     async def async_set_threshold(self, value: float) -> None:
         self.threshold = value
+        await self.async_evaluate()
+
+    async def async_set_export_override(self, value: float) -> None:
+        self.export_override_w = value
         await self.async_evaluate()
 
     async def async_set_enabled(self, value: bool) -> None:

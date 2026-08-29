@@ -7,6 +7,7 @@ from .cheap_controller import CheapGridChargingController
 from .const import DOMAIN
 from .entity import device_info
 from .pv_controller import PvSurplusController
+from .tesla_controller import TeslaChargingController
 from .zoe_controller import ZoeChargeLimitController
 
 
@@ -19,6 +20,7 @@ async def async_setup_entry(
             ZoeStopNowButton(controllers["zoe"], entry),
             PvPushNowButton(controllers["pv"], entry),
             CheapTestNowButton(controllers["cheap"], entry),
+            TeslaTestNowButton(controllers["tesla"], entry),
         ]
     )
 
@@ -72,6 +74,24 @@ class CheapTestNowButton(ButtonEntity):
     def __init__(self, controller: CheapGridChargingController, entry: ConfigEntry) -> None:
         self._controller = controller
         self._attr_unique_id = f"{entry.entry_id}_cheap_test_now"
+        self._attr_device_info = device_info(entry)
+
+    async def async_press(self) -> None:
+        await self._controller.async_manual_test()
+
+
+class TeslaTestNowButton(ButtonEntity):
+    """Re-applies the current Tesla-charging decision immediately - useful
+    to verify the switch connection without waiting for the next sensor
+    change."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Tesla Jetzt pruefen"
+    _attr_icon = "mdi:refresh"
+
+    def __init__(self, controller: TeslaChargingController, entry: ConfigEntry) -> None:
+        self._controller = controller
+        self._attr_unique_id = f"{entry.entry_id}_tesla_test_now"
         self._attr_device_info = device_info(entry)
 
     async def async_press(self) -> None:

@@ -1,17 +1,21 @@
 # go-e Solar Charger (Home Assistant Integration)
 
-Native Home-Assistant-Integration mit drei unabhaengigen Funktionen rund um
+Native Home-Assistant-Integration mit vier unabhaengigen Funktionen rund um
 den go-e Charger:
 
 1. **Auto Ladelimit** - stoppt den go-e, sobald das Elektroauto eine
    einstellbare Batterie-Ladung erreicht hat.
 2. **PV-Ueberschuss-Freigabe** - schickt die Leistungswerte der Powerwall
    (Solar/Netz/Akku) an den go-e, aber erst, wenn der Akkustand der
-   Powerwall eine einstellbare Schwelle erreicht hat.
+   Powerwall eine einstellbare Schwelle erreicht hat (oder die Powerwall
+   schon vorher genug ins Netz einspeist).
 3. **Guenstigstrom-Laden** (optional) - an Tagen mit schlechter
    Solar-Vorhersage wird die PV-Ueberschuss-Freigabe fuer den ganzen Tag
    pausiert und stattdessen im guenstigen Strompreis-Fenster mit Netzstrom
    geladen.
+4. **Tesla-Ladesteuerung** (optional) - startet/stoppt das Laden eines
+   zweiten Fahrzeugs mit eigener Ladeloesung ueber einen einfachen
+   Schalter, abhaengig vom Akkustand der Powerwall.
 
 Auto, Powerwall und go-e sind bereits als Sensoren in Home Assistant
 integriert - diese Integration liest nur davon. Alle Befehle an den go-e
@@ -73,6 +77,9 @@ Auto/Powerwall/go-e schon in Home Assistant haben.
    - Sensor: Batterieleistung der Powerwall (W)
    - Sensor: Akkustand der Powerwall (%)
    - Start-Schwelle "PV-Freigabe ab Akkustand" in %
+   - "PV Sofort-Freigabe ab Einspeisung" in W (Standard 3100) - sobald die
+     Powerwall trotz niedrigem Akkustand mehr als das ins Netz einspeist,
+     werden die echten Werte trotzdem gesendet
 5. Schritt "Guenstigstrom-Laden" (optional - Felder leer lassen, um das
    Feature vorerst nicht zu nutzen):
    - Sensor: Solar-Vorhersage fuer morgen (kWh)
@@ -83,10 +90,15 @@ Auto/Powerwall/go-e schon in Home Assistant haben.
      `switch.goe_wan_213832_fup`)
    - Vorhersage-Schwelle in kWh (Standard 30)
    - Preis-Schwelle in ct (Standard 20)
+6. Schritt "Tesla-Ladesteuerung" (optional - Feld leer lassen, um das
+   Feature vorerst nicht zu nutzen):
+   - Schalter: Laden des Fahrzeugs (z. B. `switch.tesla_aufladung`)
+   - "Laden trotzdem freigeben ab Einspeisung" in W (Standard 1400)
 
-Alle drei Funktionen und die go-e-Verbindung lassen sich spaeter jederzeit
+Alle vier Funktionen und die go-e-Verbindung lassen sich spaeter jederzeit
 ueber "Konfigurieren" bei der Integration anpassen - auch um
-"Guenstigstrom-Laden" nachtraeglich zu aktivieren.
+"Guenstigstrom-Laden" oder "Tesla-Ladesteuerung" nachtraeglich zu
+aktivieren.
 
 ## Erzeugte Entities
 
@@ -113,10 +125,15 @@ aktualisiert sich.)
 
 - `number.<name>_pv_freigabe_ab_akkustand` - Schwelle in %, jederzeit im
   Dashboard aenderbar, bleibt nach einem Neustart erhalten.
+- `number.<name>_pv_sofort_freigabe_ab_einspeisung` - Einspeise-Schwelle in
+  W, ab der trotz niedrigem Akkustand sofort freigegeben wird, ebenso
+  persistent.
 - `switch.<name>_pv_freigabe_aktiviert` - schaltet die Funktion an/aus.
 - `sensor.<name>_pv_freigabe_status` - Klartext-Status ("PV-Werte gesendet
   (Akkustand 62 % >= 50 %)", "Akkustand 40 % < 50 % - keine PV-Freigabe an
-  go-e", "Leistungswerte der Powerwall nicht verfuegbar", ...).
+  go-e", "Einspeisung 3500 W > 3100 W trotz Akkustand 30 % < 50 % -
+  PV-Werte trotzdem gesendet", "Leistungswerte der Powerwall nicht
+  verfuegbar", ...).
 - `button.<name>_pv_jetzt_senden` - schickt die aktuell berechneten Werte
   sofort, praktisch zum Testen der go-e-Verbindung, ohne auf die naechste
   Sensor-Aenderung oder den Keep-Alive-Tick zu warten.
@@ -149,6 +166,29 @@ unveraendert funktionsfaehig: das Feature startet inaktiv mit dem Status
 Strompreis und go-e-PV-Schalter angeben." und wird erst nach einem
 Durchlauf durch "Konfigurieren" aktiv.
 
+### Tesla-Ladesteuerung
+
+- `number.<name>_tesla_netz_freigabe` - Einspeise-Schwelle in W, ab der das
+  Laden trotz niedrigem Akkustand der Powerwall freigegeben wird, jederzeit
+  im Dashboard aenderbar, bleibt nach einem Neustart erhalten.
+- `switch.<name>_tesla_ladesteuerung_aktiviert` - schaltet die Funktion
+  an/aus. Beim Ausschalten, waehrend das Fahrzeug gerade gestoppt ist, wird
+  die Freigabe sofort zurueckgegeben, statt es dauerhaft gestoppt zu
+  lassen.
+- `sensor.<name>_tesla_ladesteuerung_status` - Klartext-Status ("Laden
+  freigegeben (Akkustand 62 % >= 50 %)", "Laden freigegeben (Einspeisung
+  1500 W >= 1400 W trotz Akkustand 30 % < 50 %)", "Laden gestoppt
+  (Akkustand 30 % < 50 %, Einspeisung 200 W < 1400 W)", "Nicht
+  konfiguriert - ...").
+- `button.<name>_tesla_jetzt_pruefen` - wendet die aktuelle Entscheidung
+  sofort erneut an, praktisch zum Testen der Schalter-Verbindung.
+
+Bestehende Installationen ohne das neue Konfigurationsfeld
+(Lade-Schalter) bleiben beim Update unveraendert funktionsfaehig: das
+Feature startet inaktiv mit dem Status "Nicht konfiguriert - bitte unter
+'Konfigurieren' den Tesla-Lade-Schalter angeben." und wird erst nach
+einem Durchlauf durch "Konfigurieren" aktiv.
+
 ## Funktionsweise
 
 ### Auto Ladelimit
@@ -170,6 +210,13 @@ Sicherheits-Voreinstellung, damit der go-e nicht mit veralteten/falschen
 PV-Werten weiterlaedt. Erreicht oder ueberschreitet der Akkustand die
 Schwelle, werden die echten Momentanwerte per `GET
 http://<go-e>/api/set?ids={"pPv":...,"pGrid":...,"pAkku":...}` gesendet.
+
+Ausnahme: die Powerwall speist manchmal auch unterhalb ihrer eigenen
+Schwelle bereits kraeftig ins Netz ein - typischerweise mittags im Sommer,
+damit sie nicht zu lange bei 100 % steht. Ueberschreitet die Einspeisung
+die separate "PV Sofort-Freigabe ab Einspeisung"-Schwelle (Standard
+3100 W), werden die echten Werte trotzdem gesendet, statt den Ueberschuss
+verpuffen zu lassen.
 
 Der go-e erwartet diese Werte mindestens alle 5 Sekunden aktualisiert -
 kommt laenger nichts an, geht er davon aus, dass die PV-Quelle weg ist,
@@ -214,6 +261,24 @@ kein erzwungenes Laden).
 Die reine Entscheidungslogik steckt in `cheap_logic.py`, frei von
 Home-Assistant-Importen.
 
+### Tesla-Ladesteuerung
+
+Der Tesla hat eine eigene, solargestuetzte Ladeloesung und sein eigenes
+Ladelimit (`number.tesla_ladelimit`, ausserhalb dieser Integration) - hier
+wird nur ein einfacher Schalter (`switch.tesla_aufladung`) an-/ausgestellt.
+Solange der Akkustand der Powerwall unter der (mit "PV-Ueberschuss-
+Freigabe" geteilten, live gelesenen) Schwelle liegt, bleibt der Schalter
+aus - ausser die Powerwall speist bereits mindestens die "Laden trotzdem
+freigeben ab Einspeisung"-Schwelle (Standard 1400 W) ins Netz ein, dann
+wird trotzdem freigegeben. Erreicht die Powerwall selbst die Schwelle,
+bleibt der Schalter dauerhaft an, unabhaengig von der Einspeisung.
+
+Der Schalter wird nur bei einer tatsaechlichen Aenderung der Entscheidung
+umgeschaltet, nicht bei jeder Sensor-Aktualisierung erneut - der Tesla hat
+kein go-e-aehnliches Watchdog-Verhalten, das ein staendiges Neusenden
+braucht. Die reine Entscheidungslogik steckt in `tesla_logic.py`, frei von
+Home-Assistant-Importen.
+
 ## Getestet, aber nicht an echter Hardware
 
 Gegen einen echten go-e wurde das noch nicht ausprobiert - dafuer hat diese
@@ -230,16 +295,21 @@ Session keinen Netzwerkzugriff auf dein Heimnetz. Stattdessen:
   Szenarien (Vorhersage ueber/unter Schwelle, Preis-Uebergaenge, taeglicher
   Rollover in beide Richtungen, Fenster-Ein-/Austritt mit/ohne verbundenes
   Fahrzeug, ...).
-- `tests/test_integration.py` baut die komplette Integration (alle drei
+- `custom_components/go_e_solar_charger/tesla_logic.py` ebenso (SoC ueber/
+  unter Schwelle, Einspeise-Freigabe trotz niedrigem SoC, deaktiviert, SoC
+  nicht verfuegbar, ...).
+- `tests/test_integration.py` baut die komplette Integration (alle vier
   Funktionen) in einer echten (Test-)Home-Assistant-Instanz auf
   (`pytest-homeassistant-custom-component`), simuliert die
   Sensor-Uebergaenge und prueft, dass die richtigen Befehle an einen
   gemockten go-e gehen, inklusive Neustart (Limit/Schwelle/Aktiviert-
   Zustand bleiben erhalten), des kompletten
   Guenstigstrom-Tageszyklus (Abend-Latch -> Mitternacht-Rollover ->
-  Fenster-Ende -> naechster Abend-Latch -> naechster Rollover zurueck)
-  sowie des Falls einer bestehenden, noch nicht auf dieses Feature
-  konfigurierten Installation.
+  Fenster-Ende -> naechster Abend-Latch -> naechster Rollover zurueck),
+  der PV-Sofort-Freigabe bei hoher Einspeisung, der Tesla-Ladesteuerung
+  (SoC- und Einspeise-Bedingungen, Deaktivieren) sowie der Faelle einer
+  bestehenden, noch nicht auf die jeweiligen Features konfigurierten
+  Installation.
 
 Zum Ausfuehren:
 

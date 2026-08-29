@@ -13,9 +13,12 @@ from .const import (
     CONF_GOE_HOST,
     CONF_PV_BATTERY_ENTITY,
     CONF_PV_DEFAULT_THRESHOLD,
+    CONF_PV_EXPORT_OVERRIDE_THRESHOLD,
     CONF_PV_GRID_ENTITY,
     CONF_PV_SOC_ENTITY,
     CONF_PV_SOLAR_ENTITY,
+    CONF_TESLA_GRID_RELEASE_THRESHOLD,
+    CONF_TESLA_SWITCH_ENTITY,
     CONF_ZOE_CAR_CONNECTED_ENTITY,
     CONF_ZOE_CAR_CONNECTED_ON_STATE,
     CONF_ZOE_CHARGING_ENTITY,
@@ -24,25 +27,31 @@ from .const import (
     CONF_ZOE_SOC_ENTITY,
     DEFAULT_CHEAP_FORECAST_THRESHOLD,
     DEFAULT_CHEAP_PRICE_THRESHOLD,
+    DEFAULT_PV_EXPORT_OVERRIDE_THRESHOLD,
     DEFAULT_PV_THRESHOLD,
+    DEFAULT_TESLA_GRID_RELEASE_THRESHOLD,
     DEFAULT_ZOE_CAR_CONNECTED_ON_STATE,
     DEFAULT_ZOE_CHARGING_ON_STATE,
     DEFAULT_ZOE_LIMIT,
     DOMAIN,
     MAX_CHEAP_FORECAST_THRESHOLD,
     MAX_CHEAP_PRICE_THRESHOLD,
+    MAX_PV_EXPORT_OVERRIDE_THRESHOLD,
     MAX_PV_THRESHOLD,
+    MAX_TESLA_GRID_RELEASE_THRESHOLD,
     MAX_ZOE_LIMIT,
     MIN_CHEAP_FORECAST_THRESHOLD,
     MIN_CHEAP_PRICE_THRESHOLD,
+    MIN_PV_EXPORT_OVERRIDE_THRESHOLD,
     MIN_PV_THRESHOLD,
+    MIN_TESLA_GRID_RELEASE_THRESHOLD,
     MIN_ZOE_LIMIT,
 )
 
-# Four steps (connection -> Zoe -> PV -> cheap-grid) instead of one giant
-# form, now that there are three features' worth of fields to fill in. All
-# four steps' answers are merged into one config entry / options entry at
-# the end.
+# Five steps (connection -> Zoe -> PV -> cheap-grid -> Tesla) instead of
+# one giant form, now that there are four features' worth of fields to
+# fill in. All five steps' answers are merged into one config entry /
+# options entry at the end.
 
 
 def _connection_schema(defaults: dict) -> vol.Schema:
@@ -130,6 +139,20 @@ def _pv_schema(defaults: dict) -> vol.Schema:
                     unit_of_measurement="%",
                 )
             ),
+            vol.Optional(
+                CONF_PV_EXPORT_OVERRIDE_THRESHOLD,
+                default=defaults.get(
+                    CONF_PV_EXPORT_OVERRIDE_THRESHOLD, DEFAULT_PV_EXPORT_OVERRIDE_THRESHOLD
+                ),
+            ): selector.NumberSelector(
+                selector.NumberSelectorConfig(
+                    min=MIN_PV_EXPORT_OVERRIDE_THRESHOLD,
+                    max=MAX_PV_EXPORT_OVERRIDE_THRESHOLD,
+                    step=50,
+                    mode=selector.NumberSelectorMode.BOX,
+                    unit_of_measurement="W",
+                )
+            ),
         }
     )
 
@@ -179,6 +202,31 @@ def _cheap_schema(defaults: dict) -> vol.Schema:
     )
 
 
+def _tesla_schema(defaults: dict) -> vol.Schema:
+    return vol.Schema(
+        {
+            vol.Required(
+                CONF_TESLA_SWITCH_ENTITY,
+                default=defaults.get(CONF_TESLA_SWITCH_ENTITY, vol.UNDEFINED),
+            ): selector.EntitySelector(selector.EntitySelectorConfig(domain="switch")),
+            vol.Optional(
+                CONF_TESLA_GRID_RELEASE_THRESHOLD,
+                default=defaults.get(
+                    CONF_TESLA_GRID_RELEASE_THRESHOLD, DEFAULT_TESLA_GRID_RELEASE_THRESHOLD
+                ),
+            ): selector.NumberSelector(
+                selector.NumberSelectorConfig(
+                    min=MIN_TESLA_GRID_RELEASE_THRESHOLD,
+                    max=MAX_TESLA_GRID_RELEASE_THRESHOLD,
+                    step=50,
+                    mode=selector.NumberSelectorMode.BOX,
+                    unit_of_measurement="W",
+                )
+            ),
+        }
+    )
+
+
 def _normalize(data: dict) -> dict:
     data = dict(data)
     if not data.get(CONF_ZOE_CAR_CONNECTED_ENTITY):
@@ -189,10 +237,14 @@ def _normalize(data: dict) -> dict:
         data[CONF_ZOE_DEFAULT_LIMIT] = int(data[CONF_ZOE_DEFAULT_LIMIT])
     if CONF_PV_DEFAULT_THRESHOLD in data:
         data[CONF_PV_DEFAULT_THRESHOLD] = int(data[CONF_PV_DEFAULT_THRESHOLD])
+    if CONF_PV_EXPORT_OVERRIDE_THRESHOLD in data:
+        data[CONF_PV_EXPORT_OVERRIDE_THRESHOLD] = int(data[CONF_PV_EXPORT_OVERRIDE_THRESHOLD])
     if CONF_CHEAP_FORECAST_THRESHOLD in data:
         data[CONF_CHEAP_FORECAST_THRESHOLD] = int(data[CONF_CHEAP_FORECAST_THRESHOLD])
     if CONF_CHEAP_PRICE_THRESHOLD in data:
         data[CONF_CHEAP_PRICE_THRESHOLD] = float(data[CONF_CHEAP_PRICE_THRESHOLD])
+    if CONF_TESLA_GRID_RELEASE_THRESHOLD in data:
+        data[CONF_TESLA_GRID_RELEASE_THRESHOLD] = int(data[CONF_TESLA_GRID_RELEASE_THRESHOLD])
     return data
 
 
@@ -223,10 +275,16 @@ class GoESolarChargerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_cheap(self, user_input=None):
         if user_input is not None:
             self._data.update(user_input)
+            return await self.async_step_tesla()
+        return self.async_show_form(step_id="cheap", data_schema=_cheap_schema({}))
+
+    async def async_step_tesla(self, user_input=None):
+        if user_input is not None:
+            self._data.update(user_input)
             return self.async_create_entry(
                 title="go-e Solar Charger", data=_normalize(self._data)
             )
-        return self.async_show_form(step_id="cheap", data_schema=_cheap_schema({}))
+        return self.async_show_form(step_id="tesla", data_schema=_tesla_schema({}))
 
     @staticmethod
     def async_get_options_flow(config_entry: ConfigEntry):
@@ -271,5 +329,11 @@ class GoESolarChargerOptionsFlow(config_entries.OptionsFlow):
     async def async_step_cheap(self, user_input=None):
         if user_input is not None:
             self._data.update(user_input)
-            return self.async_create_entry(title="", data=_normalize(self._data))
+            return await self.async_step_tesla()
         return self.async_show_form(step_id="cheap", data_schema=_cheap_schema(self._current))
+
+    async def async_step_tesla(self, user_input=None):
+        if user_input is not None:
+            self._data.update(user_input)
+            return self.async_create_entry(title="", data=_normalize(self._data))
+        return self.async_show_form(step_id="tesla", data_schema=_tesla_schema(self._current))

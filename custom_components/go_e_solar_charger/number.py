@@ -9,15 +9,20 @@ from .const import (
     DOMAIN,
     MAX_CHEAP_FORECAST_THRESHOLD,
     MAX_CHEAP_PRICE_THRESHOLD,
+    MAX_PV_EXPORT_OVERRIDE_THRESHOLD,
     MAX_PV_THRESHOLD,
+    MAX_TESLA_GRID_RELEASE_THRESHOLD,
     MAX_ZOE_LIMIT,
     MIN_CHEAP_FORECAST_THRESHOLD,
     MIN_CHEAP_PRICE_THRESHOLD,
+    MIN_PV_EXPORT_OVERRIDE_THRESHOLD,
     MIN_PV_THRESHOLD,
+    MIN_TESLA_GRID_RELEASE_THRESHOLD,
     MIN_ZOE_LIMIT,
 )
 from .entity import device_info
 from .pv_controller import PvSurplusController
+from .tesla_controller import TeslaChargingController
 from .zoe_controller import ZoeChargeLimitController
 
 
@@ -29,8 +34,10 @@ async def async_setup_entry(
         [
             ZoeLimitNumber(controllers["zoe"], entry),
             PvThresholdNumber(controllers["pv"], entry),
+            PvExportOverrideNumber(controllers["pv"], entry),
             CheapForecastThresholdNumber(controllers["cheap"], entry),
             CheapPriceThresholdNumber(controllers["cheap"], entry),
+            TeslaGridReleaseThresholdNumber(controllers["tesla"], entry),
         ]
     )
 
@@ -103,6 +110,40 @@ class PvThresholdNumber(NumberEntity, RestoreEntity):
         await self._controller.async_set_threshold(value)
 
 
+class PvExportOverrideNumber(NumberEntity, RestoreEntity):
+    _attr_has_entity_name = True
+    _attr_name = "PV Sofort-Freigabe ab Einspeisung"
+    _attr_native_min_value = MIN_PV_EXPORT_OVERRIDE_THRESHOLD
+    _attr_native_max_value = MAX_PV_EXPORT_OVERRIDE_THRESHOLD
+    _attr_native_step = 50
+    _attr_native_unit_of_measurement = "W"
+    _attr_mode = NumberMode.BOX
+    _attr_icon = "mdi:transmission-tower-export"
+
+    def __init__(self, controller: PvSurplusController, entry: ConfigEntry) -> None:
+        self._controller = controller
+        self._attr_unique_id = f"{entry.entry_id}_pv_export_override_threshold"
+        self._attr_native_value = controller.export_override_w
+        self._attr_device_info = device_info(entry)
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        last_state = await self.async_get_last_state()
+        if last_state is not None and last_state.state not in ("unknown", "unavailable"):
+            try:
+                value = float(last_state.state)
+            except ValueError:
+                value = None
+            if value is not None:
+                self._attr_native_value = value
+                self._controller.export_override_w = value
+
+    async def async_set_native_value(self, value: float) -> None:
+        self._attr_native_value = value
+        self.async_write_ha_state()
+        await self._controller.async_set_export_override(value)
+
+
 class CheapForecastThresholdNumber(NumberEntity, RestoreEntity):
     _attr_has_entity_name = True
     _attr_name = "Guenstigstrom Solar-Schwelle"
@@ -169,3 +210,37 @@ class CheapPriceThresholdNumber(NumberEntity, RestoreEntity):
         self._attr_native_value = value
         self.async_write_ha_state()
         await self._controller.async_set_price_threshold(value)
+
+
+class TeslaGridReleaseThresholdNumber(NumberEntity, RestoreEntity):
+    _attr_has_entity_name = True
+    _attr_name = "Tesla Netz-Freigabe"
+    _attr_native_min_value = MIN_TESLA_GRID_RELEASE_THRESHOLD
+    _attr_native_max_value = MAX_TESLA_GRID_RELEASE_THRESHOLD
+    _attr_native_step = 50
+    _attr_native_unit_of_measurement = "W"
+    _attr_mode = NumberMode.BOX
+    _attr_icon = "mdi:transmission-tower-export"
+
+    def __init__(self, controller: TeslaChargingController, entry: ConfigEntry) -> None:
+        self._controller = controller
+        self._attr_unique_id = f"{entry.entry_id}_tesla_grid_release_threshold"
+        self._attr_native_value = controller.grid_release_threshold
+        self._attr_device_info = device_info(entry)
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        last_state = await self.async_get_last_state()
+        if last_state is not None and last_state.state not in ("unknown", "unavailable"):
+            try:
+                value = float(last_state.state)
+            except ValueError:
+                value = None
+            if value is not None:
+                self._attr_native_value = value
+                self._controller.grid_release_threshold = value
+
+    async def async_set_native_value(self, value: float) -> None:
+        self._attr_native_value = value
+        self.async_write_ha_state()
+        await self._controller.async_set_grid_release_threshold(value)
