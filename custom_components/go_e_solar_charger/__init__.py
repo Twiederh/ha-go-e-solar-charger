@@ -1,6 +1,6 @@
 """go-e Solar Charger (Home Assistant edition).
 
-Two independent features, one go-e Charger, one device in the HA UI:
+Three independent features, one go-e Charger, one device in the HA UI:
 
 - Auto charge limit: stops the go-e once the car reaches a configurable
   SoC, using sensors already provided by other integrations (no direct
@@ -13,13 +13,24 @@ Two independent features, one go-e Charger, one device in the HA UI:
 - PV-surplus push: feeds pPv/pGrid/pAkku into go-e's own PV-surplus
   charging logic once the Powerwall's SoC is above a configurable
   threshold - see pv_controller.py / pv_logic.py. Talks to go-e via "ids".
+- Cheap-grid charging: on days with a poor solar forecast, suppresses the
+  PV-surplus feature entirely and force-charges from the grid instead
+  during a cheap price window - see cheap_controller.py / cheap_logic.py.
+  Also toggles go-e's own PV-surplus switch (a separate entity from
+  another integration) off for the day and back on afterwards, and defers
+  to the Auto charge limit's SoC-based stop at all times (frc changes
+  triggered by that feature always win, since they react to real SoC
+  changes rather than a fixed schedule).
 
-These two go-e API mechanisms are independent of each other, so both
-features can run at once without interfering.
+Configured for an entry created before this feature existed, the cheap-
+grid controller simply stays inert ("not configured") until the entry is
+reconfigured with its new fields - it never crashes setup for an older
+entry missing them.
 """
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
+from .cheap_controller import CheapGridChargingController
 from .const import DOMAIN, PLATFORMS
 from .pv_controller import PvSurplusController
 from .zoe_controller import ZoeChargeLimitController
@@ -29,18 +40,24 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})
     zoe_controller = ZoeChargeLimitController(hass, entry)
     pv_controller = PvSurplusController(hass, entry)
+    cheap_controller = CheapGridChargingController(
+        hass, entry, on_frc_changed=zoe_controller.async_evaluate
+    )
+    pv_controller.set_suppressor(cheap_controller)
     hass.data[DOMAIN][entry.entry_id] = {
         "zoe": zoe_controller,
         "pv": pv_controller,
+        "cheap": cheap_controller,
     }
 
     # Entities restore their own state (limit/threshold/enabled) during this
-    # call and push it into the controllers - so it must happen before
-    # either controller's first evaluation.
+    # call and push it into the controllers - so it must happen before any
+    # controller's first evaluation.
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     await zoe_controller.async_setup()
     await pv_controller.async_setup()
+    await cheap_controller.async_setup()
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
     return True
 
@@ -51,6 +68,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         controllers = hass.data[DOMAIN].pop(entry.entry_id)
         controllers["zoe"].async_unload()
         controllers["pv"].async_unload()
+        controllers["cheap"].async_unload()
     return unload_ok
 
 

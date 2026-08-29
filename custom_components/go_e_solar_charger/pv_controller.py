@@ -56,10 +56,18 @@ class PvSurplusController:
 
         self._unsub_track = None
         self._unsub_interval = None
+        # Set by __init__.py right after construction, if the cheap-grid-
+        # charging feature is configured - lets it pause this feature
+        # entirely (not even the zeroed safety values) on days it takes
+        # over instead.
+        self._suppressed_by = None
 
     @property
     def signal(self) -> str:
         return f"{SIGNAL_PV_STATUS_UPDATE}_{self.entry.entry_id}"
+
+    def set_suppressor(self, controller) -> None:
+        self._suppressed_by = controller
 
     async def async_setup(self) -> None:
         entities = [self._solar_entity, self._grid_entity, self._battery_entity, self._soc_entity]
@@ -100,6 +108,11 @@ class PvSurplusController:
             return None
 
     async def async_evaluate(self) -> None:
+        if self._suppressed_by is not None and self._suppressed_by.suppress_pv:
+            self.status_text = "Pausiert (Guenstigstrom-Tag aktiv)"
+            async_dispatcher_send(self.hass, self.signal)
+            return
+
         result = evaluate(
             PvPushInput(
                 enabled=self.enabled,

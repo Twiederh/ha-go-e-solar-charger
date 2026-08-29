@@ -31,6 +31,17 @@
           "pv_soc_entity_id": "Sensor: Akkustand der Powerwall (%)",
           "pv_default_threshold": "PV-Freigabe ab Akkustand (%)"
         }
+      },
+      "cheap": {
+        "title": "Guenstigstrom-Laden",
+        "description": "Optional: An Tagen mit schlechter Solar-Vorhersage wird die PV-Ueberschuss-Freigabe fuer den ganzen Tag pausiert und stattdessen im Guenstigstrom-Fenster mit Netzstrom geladen. Nutzt den bereits oben angegebenen \"Fahrzeug verbunden\"-Sensor. Felder leer lassen, um dieses Feature (vorerst) nicht zu nutzen.",
+        "data": {
+          "cheap_forecast_entity_id": "Sensor: Solar-Vorhersage fuer morgen (kWh)",
+          "cheap_price_entity_id": "Sensor: aktueller Strompreis",
+          "cheap_goe_pv_switch_entity_id": "Schalter: PV-Ueberschussladen am go-e selbst",
+          "cheap_forecast_threshold_kwh": "Vorhersage-Schwelle (kWh)",
+          "cheap_price_threshold_ct": "Preis-Schwelle (ct)"
+        }
       }
     }
   },
@@ -62,6 +73,16 @@
           "pv_battery_entity_id": "Sensor: Batterieleistung der Powerwall (W)",
           "pv_soc_entity_id": "Sensor: Akkustand der Powerwall (%)",
           "pv_default_threshold": "PV-Freigabe ab Akkustand (%)"
+        }
+      },
+      "cheap": {
+        "title": "Guenstigstrom-Laden",
+        "data": {
+          "cheap_forecast_entity_id": "Sensor: Solar-Vorhersage fuer morgen (kWh)",
+          "cheap_price_entity_id": "Sensor: aktueller Strompreis",
+          "cheap_goe_pv_switch_entity_id": "Schalter: PV-Ueberschussladen am go-e selbst",
+          "cheap_forecast_threshold_kwh": "Vorhersage-Schwelle (kWh)",
+          "cheap_price_threshold_ct": "Preis-Schwelle (ct)"
         }
       }
     }

@@ -1,6 +1,6 @@
 # go-e Solar Charger (Home Assistant Integration)
 
-Native Home-Assistant-Integration mit zwei unabhaengigen Funktionen rund um
+Native Home-Assistant-Integration mit drei unabhaengigen Funktionen rund um
 den go-e Charger:
 
 1. **Auto Ladelimit** - stoppt den go-e, sobald das Elektroauto eine
@@ -8,6 +8,10 @@ den go-e Charger:
 2. **PV-Ueberschuss-Freigabe** - schickt die Leistungswerte der Powerwall
    (Solar/Netz/Akku) an den go-e, aber erst, wenn der Akkustand der
    Powerwall eine einstellbare Schwelle erreicht hat.
+3. **Guenstigstrom-Laden** (optional) - an Tagen mit schlechter
+   Solar-Vorhersage wird die PV-Ueberschuss-Freigabe fuer den ganzen Tag
+   pausiert und stattdessen im guenstigen Strompreis-Fenster mit Netzstrom
+   geladen.
 
 Auto, Powerwall und go-e sind bereits als Sensoren in Home Assistant
 integriert - diese Integration liest nur davon. Alle Befehle an den go-e
@@ -69,9 +73,20 @@ Auto/Powerwall/go-e schon in Home Assistant haben.
    - Sensor: Batterieleistung der Powerwall (W)
    - Sensor: Akkustand der Powerwall (%)
    - Start-Schwelle "PV-Freigabe ab Akkustand" in %
+5. Schritt "Guenstigstrom-Laden" (optional - Felder leer lassen, um das
+   Feature vorerst nicht zu nutzen):
+   - Sensor: Solar-Vorhersage fuer morgen (kWh)
+   - Sensor: aktueller Strompreis (numerischer Sensor, kein
+     Binaer-/Target-Rate-Sensor)
+   - Schalter: PV-Ueberschussladen am go-e selbst (der Schalter, den auch
+     "PV-Ueberschuss-Freigabe" oben ansteuert, z. B.
+     `switch.goe_wan_213832_fup`)
+   - Vorhersage-Schwelle in kWh (Standard 30)
+   - Preis-Schwelle in ct (Standard 20)
 
-Beide Funktionen und die go-e-Verbindung lassen sich spaeter jederzeit
-ueber "Konfigurieren" bei der Integration anpassen.
+Alle drei Funktionen und die go-e-Verbindung lassen sich spaeter jederzeit
+ueber "Konfigurieren" bei der Integration anpassen - auch um
+"Guenstigstrom-Laden" nachtraeglich zu aktivieren.
 
 ## Erzeugte Entities
 
@@ -106,6 +121,34 @@ aktualisiert sich.)
   sofort, praktisch zum Testen der go-e-Verbindung, ohne auf die naechste
   Sensor-Aenderung oder den Keep-Alive-Tick zu warten.
 
+### Guenstigstrom-Laden
+
+- `number.<name>_guenstigstrom_solar_schwelle` - Vorhersage-Schwelle in
+  kWh, jederzeit im Dashboard aenderbar, bleibt nach einem Neustart
+  erhalten.
+- `number.<name>_guenstigstrom_preis_schwelle` - Preis-Schwelle in ct,
+  ebenso persistent.
+- `switch.<name>_guenstigstrom_aktiviert` - schaltet die Funktion an/aus.
+  Beim Ausschalten waehrend eines aktiven Guenstigfensters wird die
+  Kontrolle sofort zurueckgegeben (go-e-Zwangsladen beendet, PV-Schalter
+  wieder an), statt bis zum naechsten Fenster zu warten.
+- `sensor.<name>_guenstigstrom_status` - Klartext-Status ("Normaler Tag
+  (Vorhersage 45.0 kWh >= 30 kWh)", "Guenstigstrom-Tag (...) - wartet auf
+  Guenstigfenster", "Guenstigfenster aktiv - Laden erzwungen (...)",
+  "Guenstigfenster aktiv, aber kein Fahrzeug verbunden", "Nicht
+  konfiguriert - ...").
+- `button.<name>_guenstigstrom_jetzt_testen` - sampelt die Solar-Vorhersage
+  sofort neu (statt auf die taegliche Auswertungszeit zu warten) und wendet
+  den aktuellen Fenster-Status direkt an - praktisch zum Testen der
+  go-e-/Schalter-Verbindung.
+
+Bestehende Installationen ohne die drei neuen Konfigurationsfelder
+(Solar-Vorhersage, Strompreis, go-e-PV-Schalter) bleiben beim Update
+unveraendert funktionsfaehig: das Feature startet inaktiv mit dem Status
+"Nicht konfiguriert - bitte unter 'Konfigurieren' Solar-Vorhersage,
+Strompreis und go-e-PV-Schalter angeben." und wird erst nach einem
+Durchlauf durch "Konfigurieren" aktiv.
+
 ## Funktionsweise
 
 ### Auto Ladelimit
@@ -137,6 +180,40 @@ auch wenn sich die Werte gar nicht geaendert haben. Die reine
 Entscheidungslogik steckt in `pv_logic.py`, frei von
 Home-Assistant-Importen.
 
+### Guenstigstrom-Laden
+
+Zwei unabhaengige taegliche Rhythmen steuern dieses Feature:
+
+1. Einmal am Abend (Standard: 20:30 Uhr) wird die aktuelle
+   Solar-Vorhersage fuer "morgen" mit der Vorhersage-Schwelle verglichen
+   und als "morgen wird ein Guenstigstrom-Tag" zwischengespeichert
+   ("gelatcht"). Das ist notwendig, weil sich die Bedeutung eines
+   "Vorhersage fuer morgen"-Sensors genau um Mitternacht auf den naechsten
+   Tag verschiebt - ein Live-Zugriff waehrend des Guenstigfensters selbst
+   waere also nicht sicher.
+2. Der Strompreis-Sensor wechselt zwischen einem guenstigen und einem
+   teuren Wert. Unterschreitet er die Preis-Schwelle, beginnt das
+   Guenstigfenster; ueberschreitet er sie wieder, endet es. In dieser
+   Konfiguration faellt der Beginn des Guenstigfensters praktischerweise
+   mit Mitternacht zusammen - genau der Moment, in dem die am Vorabend
+   gelatchte Entscheidung zur "heutigen" Entscheidung wird.
+
+Ist "heute" laut dieser Entscheidung ein Guenstigstrom-Tag, passiert
+Folgendes fuer den **ganzen Tag**: der go-e-eigene
+PV-Ueberschussladen-Schalter wird ausgeschaltet, und die eigene
+PV-Ueberschuss-Freigabe dieser Integration sendet ueberhaupt keine Werte
+mehr (auch nicht die Sicherheits-Nullen) an den go-e. Zusaetzlich wird
+**nur beim Betreten/Verlassen des Guenstigfensters** (nicht kontinuierlich)
+`frc=On` gesetzt, solange ein Fahrzeug verbunden ist, und beim Verlassen
+wieder auf `frc=Neutral` zurueckgesetzt - damit das unabhaengige
+SoC-Ladelimit ("Auto Ladelimit") jederzeit weiterhin stoppen kann, ohne
+dass sich beide Funktionen gegenseitig ueberschreiben. Ist "heute" kein
+Guenstigstrom-Tag, bleibt alles wie gehabt (PV-Ueberschuss-Freigabe aktiv,
+kein erzwungenes Laden).
+
+Die reine Entscheidungslogik steckt in `cheap_logic.py`, frei von
+Home-Assistant-Importen.
+
 ## Getestet, aber nicht an echter Hardware
 
 Gegen einen echten go-e wurde das noch nicht ausprobiert - dafuer hat diese
@@ -149,12 +226,20 @@ Session keinen Netzwerkzugriff auf dein Heimnetz. Stattdessen:
 - `custom_components/go_e_solar_charger/pv_logic.py` ebenso, mit 7
   Szenarien (unter/auf/ueber Schwelle, deaktiviert, SoC nicht verfuegbar,
   einzelne Leistungswerte fehlen, ...).
-- `tests/test_integration.py` baut die komplette Integration (beide
+- `custom_components/go_e_solar_charger/cheap_logic.py` ebenso, mit 20+
+  Szenarien (Vorhersage ueber/unter Schwelle, Preis-Uebergaenge, taeglicher
+  Rollover in beide Richtungen, Fenster-Ein-/Austritt mit/ohne verbundenes
+  Fahrzeug, ...).
+- `tests/test_integration.py` baut die komplette Integration (alle drei
   Funktionen) in einer echten (Test-)Home-Assistant-Instanz auf
   (`pytest-homeassistant-custom-component`), simuliert die
   Sensor-Uebergaenge und prueft, dass die richtigen Befehle an einen
   gemockten go-e gehen, inklusive Neustart (Limit/Schwelle/Aktiviert-
-  Zustand bleiben erhalten).
+  Zustand bleiben erhalten), des kompletten
+  Guenstigstrom-Tageszyklus (Abend-Latch -> Mitternacht-Rollover ->
+  Fenster-Ende -> naechster Abend-Latch -> naechster Rollover zurueck)
+  sowie des Falls einer bestehenden, noch nicht auf dieses Feature
+  konfigurierten Installation.
 
 Zum Ausfuehren:
 

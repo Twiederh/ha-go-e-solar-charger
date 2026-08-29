@@ -3,6 +3,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
+from .cheap_controller import CheapGridChargingController
 from .const import DOMAIN
 from .entity import device_info
 from .pv_controller import PvSurplusController
@@ -17,6 +18,7 @@ async def async_setup_entry(
         [
             ZoeStopNowButton(controllers["zoe"], entry),
             PvPushNowButton(controllers["pv"], entry),
+            CheapTestNowButton(controllers["cheap"], entry),
         ]
     )
 
@@ -55,3 +57,22 @@ class PvPushNowButton(ButtonEntity):
 
     async def async_press(self) -> None:
         await self._controller.async_manual_push()
+
+
+class CheapTestNowButton(ButtonEntity):
+    """Re-samples the solar forecast right now (instead of waiting for the
+    daily evaluation time) and re-applies the current window state -
+    useful to verify the go-e/PV-switch connections without waiting for
+    the schedule."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Guenstigstrom Jetzt testen"
+    _attr_icon = "mdi:flash"
+
+    def __init__(self, controller: CheapGridChargingController, entry: ConfigEntry) -> None:
+        self._controller = controller
+        self._attr_unique_id = f"{entry.entry_id}_cheap_test_now"
+        self._attr_device_info = device_info(entry)
+
+    async def async_press(self) -> None:
+        await self._controller.async_manual_test()

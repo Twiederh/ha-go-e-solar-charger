@@ -12,7 +12,7 @@ import logging
 
 import aiohttp
 
-from .const import FRC_NEUTRAL, FRC_OFF
+from .const import FRC_NEUTRAL, FRC_OFF, FRC_ON
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -45,6 +45,12 @@ class GoEClient:
     async def release(self) -> None:
         _LOGGER.info("Gebe go-e %s wieder frei (frc=Neutral)", self._host)
         await self._set("frc", FRC_NEUTRAL)
+
+    async def force_charging_on(self) -> None:
+        """Force charging on regardless of PV surplus / amp settings - used
+        for grid-cheap-price charging on days with a poor solar forecast."""
+        _LOGGER.info("Erzwinge Laden am go-e %s (frc=On)", self._host)
+        await self._set("frc", FRC_ON)
 
     async def push_pv_values(self, values: dict) -> None:
         """values: e.g. {"pPv": 3200.5, "pGrid": -450.0, "pAkku": -1200.0}"""

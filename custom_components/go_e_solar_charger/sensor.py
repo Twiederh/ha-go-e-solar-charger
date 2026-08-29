@@ -4,6 +4,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
+from .cheap_controller import CheapGridChargingController
 from .const import DOMAIN
 from .entity import device_info
 from .pv_controller import PvSurplusController
@@ -18,6 +19,7 @@ async def async_setup_entry(
         [
             ZoeStatusSensor(controllers["zoe"], entry),
             PvStatusSensor(controllers["pv"], entry),
+            CheapStatusSensor(controllers["cheap"], entry),
         ]
     )
 
@@ -31,6 +33,31 @@ class ZoeStatusSensor(SensorEntity):
     def __init__(self, controller: ZoeChargeLimitController, entry: ConfigEntry) -> None:
         self._controller = controller
         self._attr_unique_id = f"{entry.entry_id}_zoe_status"
+        self._attr_device_info = device_info(entry)
+
+    @property
+    def native_value(self) -> str:
+        return self._controller.status_text
+
+    async def async_added_to_hass(self) -> None:
+        self.async_on_remove(
+            async_dispatcher_connect(self.hass, self._controller.signal, self._handle_update)
+        )
+
+    @callback
+    def _handle_update(self) -> None:
+        self.async_write_ha_state()
+
+
+class CheapStatusSensor(SensorEntity):
+    _attr_has_entity_name = True
+    _attr_name = "Guenstigstrom Status"
+    _attr_icon = "mdi:transmission-tower-export"
+    _attr_should_poll = False
+
+    def __init__(self, controller: CheapGridChargingController, entry: ConfigEntry) -> None:
+        self._controller = controller
+        self._attr_unique_id = f"{entry.entry_id}_cheap_status"
         self._attr_device_info = device_info(entry)
 
     @property

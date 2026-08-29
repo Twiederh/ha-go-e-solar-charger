@@ -4,6 +4,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 
+from .cheap_controller import CheapGridChargingController
 from .const import DOMAIN
 from .entity import device_info
 from .pv_controller import PvSurplusController
@@ -18,6 +19,7 @@ async def async_setup_entry(
         [
             ZoeLimitEnableSwitch(controllers["zoe"], entry),
             PvPushEnableSwitch(controllers["pv"], entry),
+            CheapEnableSwitch(controllers["cheap"], entry),
         ]
     )
 
@@ -60,6 +62,36 @@ class PvPushEnableSwitch(SwitchEntity, RestoreEntity):
     def __init__(self, controller: PvSurplusController, entry: ConfigEntry) -> None:
         self._controller = controller
         self._attr_unique_id = f"{entry.entry_id}_pv_enabled"
+        self._attr_is_on = True
+        self._attr_device_info = device_info(entry)
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        last_state = await self.async_get_last_state()
+        if last_state is not None and last_state.state in ("on", "off"):
+            value = last_state.state == "on"
+            self._attr_is_on = value
+            self._controller.enabled = value
+
+    async def async_turn_on(self, **kwargs) -> None:
+        self._attr_is_on = True
+        self.async_write_ha_state()
+        await self._controller.async_set_enabled(True)
+
+    async def async_turn_off(self, **kwargs) -> None:
+        self._attr_is_on = False
+        self.async_write_ha_state()
+        await self._controller.async_set_enabled(False)
+
+
+class CheapEnableSwitch(SwitchEntity, RestoreEntity):
+    _attr_has_entity_name = True
+    _attr_name = "Guenstigstrom aktiviert"
+    _attr_icon = "mdi:power"
+
+    def __init__(self, controller: CheapGridChargingController, entry: ConfigEntry) -> None:
+        self._controller = controller
+        self._attr_unique_id = f"{entry.entry_id}_cheap_enabled"
         self._attr_is_on = True
         self._attr_device_info = device_info(entry)
 

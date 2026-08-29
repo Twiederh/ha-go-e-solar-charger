@@ -37,12 +37,40 @@ MAX_PV_THRESHOLD = 100
 # source sensor changes.
 PV_PUSH_KEEPALIVE_INTERVAL_SECONDS = 4
 
+# --- Cheap-grid charging feature (skip PV, force-charge from the grid on
+# days with a poor solar forecast, during the cheap price window) ---
+CONF_CHEAP_FORECAST_ENTITY = "cheap_forecast_entity_id"
+CONF_CHEAP_PRICE_ENTITY = "cheap_price_entity_id"
+CONF_CHEAP_GOE_PV_SWITCH_ENTITY = "cheap_goe_pv_switch_entity_id"
+CONF_CHEAP_FORECAST_THRESHOLD = "cheap_forecast_threshold_kwh"
+CONF_CHEAP_PRICE_THRESHOLD = "cheap_price_threshold_ct"
+
+DEFAULT_CHEAP_FORECAST_THRESHOLD = 30
+MIN_CHEAP_FORECAST_THRESHOLD = 0
+MAX_CHEAP_FORECAST_THRESHOLD = 100
+# Between the two-tier price values a typical fixed off-peak tariff (e.g.
+# Octopus Go-style) swings between - just needs to sit clearly between the
+# cheap and expensive rate, exact value doesn't matter and is adjustable.
+DEFAULT_CHEAP_PRICE_THRESHOLD = 20
+MIN_CHEAP_PRICE_THRESHOLD = 0
+MAX_CHEAP_PRICE_THRESHOLD = 100
+
+# Fixed daily time (local) at which "is tomorrow a low-solar day" gets
+# latched from the forecast sensor's current reading. Needs to be well
+# before midnight: forecast integrations typically roll their "tomorrow"
+# slot forward to the next day right at midnight, at which point the same
+# sensor stops describing the day this decision is actually for.
+CHEAP_FORECAST_EVAL_HOUR = 20
+CHEAP_FORECAST_EVAL_MINUTE = 30
+
 # go-e local API v2 "frc" (forceState) values - see
 # https://github.com/goecharger/go-eCharger-API-v2
 FRC_NEUTRAL = 0  # let go-e's own charging logic decide
 FRC_OFF = 1  # force charging off, regardless of what the normal logic wants
+FRC_ON = 2  # force charging on, regardless of PV surplus or amp settings
 
 PLATFORMS = ["number", "switch", "sensor", "button"]
 
 SIGNAL_ZOE_STATUS_UPDATE = f"{DOMAIN}_zoe_status_update"
 SIGNAL_PV_STATUS_UPDATE = f"{DOMAIN}_pv_status_update"
+SIGNAL_CHEAP_STATUS_UPDATE = f"{DOMAIN}_cheap_status_update"
