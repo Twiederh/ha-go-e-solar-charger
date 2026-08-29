@@ -5,12 +5,21 @@ correctly and update their status sensors.
 
 Not part of the shipped custom_component - a development-time check.
 """
+from datetime import timedelta
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant_custom_component.common import (
+    MockConfigEntry,
+    async_fire_time_changed,
+)
 
-from custom_components.go_e_solar_charger.const import DOMAIN
+from homeassistant.util import dt as dt_util
+
+from custom_components.go_e_solar_charger.const import (
+    DOMAIN,
+    PV_PUSH_KEEPALIVE_INTERVAL_SECONDS,
+)
 
 ZOE_SOC_ENTITY = "sensor.zoe_batterie_soc"
 ZOE_CHARGING_ENTITY = "binary_sensor.goe_charging"
@@ -147,8 +156,7 @@ async def test_pv_surplus_push_flow(hass, enable_custom_integrations):
         assert mock_push.call_args.args[0] == {"pPv": 0, "pGrid": 0, "pAkku": 0}
         assert "keine PV-Freigabe" in _state(hass, f"sensor.{DEVICE_SLUG}_pv_freigabe_status")
 
-        # cross the threshold -> real values pushed (button bypasses the
-        # push throttle so we don't need to sleep in the test)
+        # cross the threshold -> real values pushed
         hass.states.async_set(PV_SOC_ENTITY, "70")
         await hass.async_block_till_done()
         await hass.services.async_call(
@@ -239,3 +247,45 @@ async def test_restores_state_after_reload(hass, enable_custom_integrations):
         assert float(_state(hass, f"number.{DEVICE_SLUG}_zoe_ladelimit")) == 65
         assert float(_state(hass, f"number.{DEVICE_SLUG}_pv_freigabe_ab_akkustand")) == 40
         assert _state(hass, f"switch.{DEVICE_SLUG}_zoe_ladelimit_aktiviert") == "off"
+
+
+@pytest.mark.asyncio
+async def test_pv_keepalive_resends_without_sensor_change(hass, enable_custom_integrations):
+    """go-e pauses charging if pPv/pGrid/pAkku aren't refreshed for a few
+    seconds - so the controller must keep re-sending on a timer even when
+    none of the source sensors change at all."""
+    hass.states.async_set(ZOE_SOC_ENTITY, "50")
+    hass.states.async_set(ZOE_CHARGING_ENTITY, "off")
+    hass.states.async_set(ZOE_CONNECTED_ENTITY, "off")
+
+    hass.states.async_set(PV_SOC_ENTITY, "70")  # above the 50 % threshold
+    hass.states.async_set(PV_SOLAR_ENTITY, "3000")
+    hass.states.async_set(PV_GRID_ENTITY, "-200")
+    hass.states.async_set(PV_BATTERY_ENTITY, "-500")
+
+    with patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.stop_charging",
+        new=AsyncMock(),
+    ), patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.release",
+        new=AsyncMock(),
+    ), patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.push_pv_values",
+        new=AsyncMock(),
+    ) as mock_push:
+        entry = await _make_entry(hass)
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+        calls_after_setup = mock_push.call_count
+        assert calls_after_setup >= 1
+        assert mock_push.call_args.args[0] == {"pPv": 3000.0, "pGrid": -200.0, "pAkku": -500.0}
+
+        # No sensor changes at all - just let the keep-alive timer fire.
+        async_fire_time_changed(
+            hass, dt_util.utcnow() + timedelta(seconds=PV_PUSH_KEEPALIVE_INTERVAL_SECONDS + 1)
+        )
+        await hass.async_block_till_done()
+
+        assert mock_push.call_count > calls_after_setup
+        assert mock_push.call_args.args[0] == {"pPv": 3000.0, "pGrid": -200.0, "pAkku": -500.0}

@@ -86,8 +86,8 @@ ueber "Konfigurieren" bei der Integration anpassen.
   (Akkustand 62 % >= 50 %)", "Akkustand 40 % < 50 % - keine PV-Freigabe an
   go-e", "Leistungswerte der Powerwall nicht verfuegbar", ...).
 - `button.<name>_pv_jetzt_senden` - schickt die aktuell berechneten Werte
-  sofort (bypasst die Sende-Drosselung), praktisch zum Testen der
-  go-e-Verbindung.
+  sofort, praktisch zum Testen der go-e-Verbindung, ohne auf die naechste
+  Sensor-Aenderung oder den Keep-Alive-Tick zu warten.
 
 ## Funktionsweise
 
@@ -104,18 +104,20 @@ frei von Home-Assistant-Importen, damit sie isoliert testbar ist.
 
 ### PV-Ueberschuss-Freigabe
 
-Reagiert ebenfalls auf Zustandsaenderungen (kein Polling). Solange der
-Akkustand der Powerwall unter der eingestellten Schwelle liegt, werden
-`pPv`, `pGrid` und `pAkku` als `0` an den go-e geschickt - Sicherheits-
-Voreinstellung, damit der go-e nicht mit veralteten/falschen PV-Werten
-weiterlaedt. Erreicht oder ueberschreitet der Akkustand die Schwelle,
-werden die echten Momentanwerte per `GET
+Solange der Akkustand der Powerwall unter der eingestellten Schwelle
+liegt, werden `pPv`, `pGrid` und `pAkku` als `0` an den go-e geschickt -
+Sicherheits-Voreinstellung, damit der go-e nicht mit veralteten/falschen
+PV-Werten weiterlaedt. Erreicht oder ueberschreitet der Akkustand die
+Schwelle, werden die echten Momentanwerte per `GET
 http://<go-e>/api/set?ids={"pPv":...,"pGrid":...,"pAkku":...}` gesendet.
-Damit nicht bei jeder kleinen Sensor-Aenderung ein neuer Request rausgeht,
-werden reale Sendungen auf minimal 5 Sekunden Abstand gedrosselt; eine
-bewusste Aenderung (Schwelle verstellen, Funktion an/aus schalten, der
-"Jetzt senden"-Button) umgeht diese Drosselung und wirkt sofort. Die reine
-Entscheidungslogik steckt in `pv_logic.py`, ebenfalls frei von
+
+Der go-e erwartet diese Werte mindestens alle 5 Sekunden aktualisiert -
+kommt laenger nichts an, geht er davon aus, dass die PV-Quelle weg ist,
+und pausiert das Laden als Sicherheitsmassnahme. Deshalb sendet die
+Integration nicht nur bei jeder Aenderung der Quell-Sensoren, sondern
+zusaetzlich alle 4 Sekunden erneut (`PV_PUSH_KEEPALIVE_INTERVAL_SECONDS`),
+auch wenn sich die Werte gar nicht geaendert haben. Die reine
+Entscheidungslogik steckt in `pv_logic.py`, frei von
 Home-Assistant-Importen.
 
 ## Getestet, aber nicht an echter Hardware

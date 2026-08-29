@@ -40,8 +40,9 @@ class ZoeStopNowButton(ButtonEntity):
 
 class PvPushNowButton(ButtonEntity):
     """Pushes the currently computed pPv/pGrid/pAkku values (or the zeroed
-    safety values, if below the threshold) immediately, bypassing the
-    normal push throttle - useful to verify the go-e connection."""
+    safety values, if below the threshold) immediately - useful to verify
+    the go-e connection without waiting for the next sensor change or
+    keep-alive tick."""
 
     _attr_has_entity_name = True
     _attr_name = "PV Jetzt senden"

@@ -30,10 +30,12 @@ CONF_PV_DEFAULT_THRESHOLD = "pv_default_threshold"
 DEFAULT_PV_THRESHOLD = 50
 MIN_PV_THRESHOLD = 0
 MAX_PV_THRESHOLD = 100
-# Don't push pPv/pGrid/pAkku to go-e more often than this, even if the
-# source power sensors update faster - go-e's own charging logic only
-# re-runs once a second anyway (see go-e API v2 docs).
-PV_PUSH_MIN_INTERVAL_SECONDS = 5
+# go-e expects pPv/pGrid/pAkku to be refreshed at least every 5 seconds -
+# if it doesn't see an update in time it assumes the PV-surplus source
+# went away and pauses charging as a safety fallback. So we re-push on a
+# timer with margin below that, on top of pushing immediately whenever a
+# source sensor changes.
+PV_PUSH_KEEPALIVE_INTERVAL_SECONDS = 4
 
 # go-e local API v2 "frc" (forceState) values - see
 # https://github.com/goecharger/go-eCharger-API-v2
