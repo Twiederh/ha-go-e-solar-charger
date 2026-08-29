@@ -1,4 +1,4 @@
-"""Glue between Home Assistant state and the pure logic in logic.py."""
+"""Glue between Home Assistant state and the pure logic in zoe_logic.py."""
 import logging
 
 from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
@@ -9,26 +9,26 @@ from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_track_state_change_event
 
 from .const import (
-    CONF_CAR_CONNECTED_ENTITY,
-    CONF_CAR_CONNECTED_ON_STATE,
-    CONF_CHARGING_ENTITY,
-    CONF_CHARGING_ON_STATE,
-    CONF_DEFAULT_LIMIT,
     CONF_GOE_API_KEY,
     CONF_GOE_HOST,
-    CONF_SOC_ENTITY,
-    DEFAULT_CAR_CONNECTED_ON_STATE,
-    DEFAULT_CHARGING_ON_STATE,
-    DEFAULT_LIMIT,
-    SIGNAL_STATUS_UPDATE,
+    CONF_ZOE_CAR_CONNECTED_ENTITY,
+    CONF_ZOE_CAR_CONNECTED_ON_STATE,
+    CONF_ZOE_CHARGING_ENTITY,
+    CONF_ZOE_CHARGING_ON_STATE,
+    CONF_ZOE_DEFAULT_LIMIT,
+    CONF_ZOE_SOC_ENTITY,
+    DEFAULT_ZOE_CAR_CONNECTED_ON_STATE,
+    DEFAULT_ZOE_CHARGING_ON_STATE,
+    DEFAULT_ZOE_LIMIT,
+    SIGNAL_ZOE_STATUS_UPDATE,
 )
 from .goe_client import GoEClient
-from .logic import ACTION_RESET, ACTION_STOP, ChargeLimitInput, evaluate
+from .zoe_logic import ACTION_RESET, ACTION_STOP, ChargeLimitInput, evaluate
 
 _LOGGER = logging.getLogger(__name__)
 
 
-class ChargeLimitController:
+class ZoeChargeLimitController:
     """One instance per config entry. Owns the current limit/enabled state
     (kept in sync with the number/switch entities), listens for changes on
     the source sensors, and talks to go-e when the decision logic says to.
@@ -38,12 +38,14 @@ class ChargeLimitController:
         self.hass = hass
         self.entry = entry
         config = {**entry.data, **entry.options}
-        self._soc_entity = config[CONF_SOC_ENTITY]
-        self._charging_entity = config[CONF_CHARGING_ENTITY]
-        self._charging_on_state = config.get(CONF_CHARGING_ON_STATE, DEFAULT_CHARGING_ON_STATE)
-        self._car_connected_entity = config.get(CONF_CAR_CONNECTED_ENTITY)
+        self._soc_entity = config[CONF_ZOE_SOC_ENTITY]
+        self._charging_entity = config[CONF_ZOE_CHARGING_ENTITY]
+        self._charging_on_state = config.get(
+            CONF_ZOE_CHARGING_ON_STATE, DEFAULT_ZOE_CHARGING_ON_STATE
+        )
+        self._car_connected_entity = config.get(CONF_ZOE_CAR_CONNECTED_ENTITY)
         self._car_connected_on_state = config.get(
-            CONF_CAR_CONNECTED_ON_STATE, DEFAULT_CAR_CONNECTED_ON_STATE
+            CONF_ZOE_CAR_CONNECTED_ON_STATE, DEFAULT_ZOE_CAR_CONNECTED_ON_STATE
         )
         self._goe = GoEClient(
             async_get_clientsession(hass),
@@ -53,7 +55,7 @@ class ChargeLimitController:
 
         # Set from restored entity state right after platform setup, before
         # async_setup() runs its first evaluation - see __init__.py.
-        self.limit: float = config.get(CONF_DEFAULT_LIMIT, DEFAULT_LIMIT)
+        self.limit: float = config.get(CONF_ZOE_DEFAULT_LIMIT, DEFAULT_ZOE_LIMIT)
         self.enabled: bool = True
         self.force_off_active: bool = False
         self.status_text: str = "Initialisiere ..."
@@ -62,7 +64,7 @@ class ChargeLimitController:
 
     @property
     def signal(self) -> str:
-        return f"{SIGNAL_STATUS_UPDATE}_{self.entry.entry_id}"
+        return f"{SIGNAL_ZOE_STATUS_UPDATE}_{self.entry.entry_id}"
 
     async def async_setup(self) -> None:
         entities = [self._soc_entity, self._charging_entity]

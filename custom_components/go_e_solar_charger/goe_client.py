@@ -1,9 +1,13 @@
 """Minimal async client for the parts of the go-eCharger local API v2 this
-integration needs: forcing charging off and releasing that again.
+integration needs: forcing charging off/on again, and feeding PV-surplus
+values into the charger's own charging logic.
 
 See https://github.com/goecharger/go-eCharger-API-v2/blob/main/http-en.md -
-values are set via GET query parameters, e.g. `/api/set?frc=1`.
+values are set via GET query parameters, e.g. `/api/set?frc=1`. The
+"ids" key is go-e's own batch mechanism for pPv/pGrid/pAkku (external
+PV-surplus-charging input) - one GET request setting all three at once.
 """
+import json
 import logging
 
 import aiohttp
@@ -41,3 +45,13 @@ class GoEClient:
     async def release(self) -> None:
         _LOGGER.info("Gebe go-e %s wieder frei (frc=Neutral)", self._host)
         await self._set("frc", FRC_NEUTRAL)
+
+    async def push_pv_values(self, values: dict) -> None:
+        """values: e.g. {"pPv": 3200.5, "pGrid": -450.0, "pAkku": -1200.0}"""
+        url = f"http://{self._host}/api/set"
+        ids = json.dumps(values)
+        async with self._session.get(
+            url, params={"ids": ids}, headers=self._headers(), timeout=TIMEOUT
+        ) as response:
+            response.raise_for_status()
+            await response.json(content_type=None)

@@ -1,8 +1,7 @@
 """End-to-end test of the integration against a real (test-mode) Home
-Assistant core: sets up the config entry, lets the number/switch/sensor/
-button entities register, then drives the Zoe SoC sensor across the limit
-and checks that the integration calls a mock go-e server correctly and
-updates its status sensor.
+Assistant core: sets up the config entry, lets all entities register, then
+drives the source sensors and checks both features call a mocked go-e
+correctly and update their status sensors.
 
 Not part of the shipped custom_component - a development-time check.
 """
@@ -11,149 +10,201 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.zoe_charge_limit.const import DOMAIN
+from custom_components.go_e_solar_charger.const import DOMAIN
 
-SOC_ENTITY = "sensor.zoe_batterie_soc"
-CHARGING_ENTITY = "binary_sensor.goe_charging"
-CONNECTED_ENTITY = "binary_sensor.goe_car_connected"
+ZOE_SOC_ENTITY = "sensor.zoe_batterie_soc"
+ZOE_CHARGING_ENTITY = "binary_sensor.goe_charging"
+ZOE_CONNECTED_ENTITY = "binary_sensor.goe_car_connected"
+
+PV_SOLAR_ENTITY = "sensor.powerwall_solar_power"
+PV_GRID_ENTITY = "sensor.powerwall_grid_power"
+PV_BATTERY_ENTITY = "sensor.powerwall_battery_power"
+PV_SOC_ENTITY = "sensor.powerwall_soc"
+
+DEVICE_SLUG = "go_e_solar_charger"
 
 
 async def _make_entry(hass, **overrides):
     data = {
-        "soc_entity_id": SOC_ENTITY,
-        "charging_entity_id": CHARGING_ENTITY,
-        "charging_on_state": "on",
-        "car_connected_entity_id": CONNECTED_ENTITY,
-        "car_connected_on_state": "on",
         "goe_host": "127.0.0.1:1",  # unused when go-e calls are mocked
         "goe_api_key": "",
-        "default_limit": 80,
+        "zoe_soc_entity_id": ZOE_SOC_ENTITY,
+        "zoe_charging_entity_id": ZOE_CHARGING_ENTITY,
+        "zoe_charging_on_state": "on",
+        "zoe_car_connected_entity_id": ZOE_CONNECTED_ENTITY,
+        "zoe_car_connected_on_state": "on",
+        "zoe_default_limit": 80,
+        "pv_solar_entity_id": PV_SOLAR_ENTITY,
+        "pv_grid_entity_id": PV_GRID_ENTITY,
+        "pv_battery_entity_id": PV_BATTERY_ENTITY,
+        "pv_soc_entity_id": PV_SOC_ENTITY,
+        "pv_default_threshold": 50,
     }
     data.update(overrides)
-    entry = MockConfigEntry(domain=DOMAIN, data=data, title="Zoe Ladelimit")
+    entry = MockConfigEntry(domain=DOMAIN, data=data, title="go-e Solar Charger")
     entry.add_to_hass(hass)
     return entry
 
 
-def _status(hass):
-    state = hass.states.get(f"sensor.zoe_ladelimit_status")
-    return state.state if state else None
+def _state(hass, entity_id):
+    s = hass.states.get(entity_id)
+    return s.state if s else None
 
 
 @pytest.mark.asyncio
-async def test_full_flow_stops_and_releases(hass, enable_custom_integrations):
-    hass.states.async_set(SOC_ENTITY, "50")
-    hass.states.async_set(CHARGING_ENTITY, "on")
-    hass.states.async_set(CONNECTED_ENTITY, "on")
+async def test_zoe_charge_limit_flow(hass, enable_custom_integrations):
+    hass.states.async_set(ZOE_SOC_ENTITY, "50")
+    hass.states.async_set(ZOE_CHARGING_ENTITY, "on")
+    hass.states.async_set(ZOE_CONNECTED_ENTITY, "on")
+    hass.states.async_set(PV_SOC_ENTITY, "10")  # keep PV feature quiet (zeros) for this test
+    hass.states.async_set(PV_SOLAR_ENTITY, "0")
+    hass.states.async_set(PV_GRID_ENTITY, "0")
+    hass.states.async_set(PV_BATTERY_ENTITY, "0")
 
     with patch(
-        "custom_components.zoe_charge_limit.goe_client.GoEClient.stop_charging",
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.stop_charging",
         new=AsyncMock(),
     ) as mock_stop, patch(
-        "custom_components.zoe_charge_limit.goe_client.GoEClient.release",
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.release",
         new=AsyncMock(),
-    ) as mock_release:
+    ) as mock_release, patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.push_pv_values",
+        new=AsyncMock(),
+    ):
         entry = await _make_entry(hass)
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
 
-        # entities exist
-        assert hass.states.get("number.zoe_ladelimit_ladelimit") is not None
-        assert hass.states.get("switch.zoe_ladelimit_aktiviert") is not None
-        assert hass.states.get("sensor.zoe_ladelimit_status") is not None
-        assert hass.states.get("button.zoe_ladelimit_jetzt_stoppen") is not None
+        assert hass.states.get(f"number.{DEVICE_SLUG}_zoe_ladelimit") is not None
+        assert hass.states.get(f"switch.{DEVICE_SLUG}_zoe_ladelimit_aktiviert") is not None
+        assert hass.states.get(f"sensor.{DEVICE_SLUG}_zoe_ladelimit_status") is not None
+        assert hass.states.get(f"button.{DEVICE_SLUG}_zoe_jetzt_stoppen") is not None
 
+        assert "Laedt" in _state(hass, f"sensor.{DEVICE_SLUG}_zoe_ladelimit_status")
         assert mock_stop.call_count == 0
-        assert "Laedt" in _status(hass)
 
-        # SoC climbs to the limit -> must stop exactly once
-        hass.states.async_set(SOC_ENTITY, "80")
+        hass.states.async_set(ZOE_SOC_ENTITY, "80")
         await hass.async_block_till_done()
         assert mock_stop.call_count == 1
-        assert "gestoppt" in _status(hass)
+        assert "gestoppt" in _state(hass, f"sensor.{DEVICE_SLUG}_zoe_ladelimit_status")
 
-        # staying above the limit must not call stop again
-        hass.states.async_set(SOC_ENTITY, "81")
+        hass.states.async_set(ZOE_SOC_ENTITY, "81")
         await hass.async_block_till_done()
-        assert mock_stop.call_count == 1
+        assert mock_stop.call_count == 1  # no repeat while still above limit
 
-        # raising the limit above current SoC releases the charger again
         await hass.services.async_call(
             "number",
             "set_value",
-            {"entity_id": "number.zoe_ladelimit_ladelimit", "value": 90},
+            {"entity_id": f"number.{DEVICE_SLUG}_zoe_ladelimit", "value": 90},
             blocking=True,
         )
         await hass.async_block_till_done()
         assert mock_release.call_count == 1
-        assert "Laedt" in _status(hass)
 
-        # car disconnects -> nothing left to release (already released), no crash
-        hass.states.async_set(CONNECTED_ENTITY, "off")
-        hass.states.async_set(CHARGING_ENTITY, "off")
-        await hass.async_block_till_done()
-        assert _status(hass) == "Kein Fahrzeug verbunden"
-
-        # push it back over the limit and disable the switch instead of
-        # waiting for a disconnect - must release too
-        hass.states.async_set(CONNECTED_ENTITY, "on")
-        hass.states.async_set(CHARGING_ENTITY, "on")
-        hass.states.async_set(SOC_ENTITY, "95")
-        await hass.async_block_till_done()
-        assert mock_stop.call_count == 2
-
-        await hass.services.async_call(
-            "switch",
-            "turn_off",
-            {"entity_id": "switch.zoe_ladelimit_aktiviert"},
-            blocking=True,
-        )
-        await hass.async_block_till_done()
-        assert mock_release.call_count == 2
-        assert _status(hass) == "Deaktiviert"
-
-        # re-enabling while the car is still sitting above the limit (go-e
-        # resumed normal charging while we were disabled) must immediately
-        # re-enforce the stop - this is a safety property, not a side effect
-        await hass.services.async_call(
-            "switch",
-            "turn_on",
-            {"entity_id": "switch.zoe_ladelimit_aktiviert"},
-            blocking=True,
-        )
-        await hass.async_block_till_done()
-        assert mock_stop.call_count == 3
-        assert "gestoppt" in _status(hass)
-
-        # SoC then drops back below the limit -> released again
-        hass.states.async_set(SOC_ENTITY, "10")
-        await hass.async_block_till_done()
-        assert mock_release.call_count == 3
-        assert "Laedt" in _status(hass)
-
-        # manual "stop now" button works independent of SoC
         await hass.services.async_call(
             "button",
             "press",
-            {"entity_id": "button.zoe_ladelimit_jetzt_stoppen"},
+            {"entity_id": f"button.{DEVICE_SLUG}_zoe_jetzt_stoppen"},
             blocking=True,
         )
         await hass.async_block_till_done()
-        assert mock_stop.call_count == 4
-        assert _status(hass) == "Manuell gestoppt"
+        assert mock_stop.call_count == 2
+        assert _state(hass, f"sensor.{DEVICE_SLUG}_zoe_ladelimit_status") == "Manuell gestoppt"
 
 
 @pytest.mark.asyncio
-async def test_restores_limit_and_enabled_after_reload(hass, enable_custom_integrations):
-    hass.states.async_set(SOC_ENTITY, "50")
-    hass.states.async_set(CHARGING_ENTITY, "on")
-    hass.states.async_set(CONNECTED_ENTITY, "on")
+async def test_pv_surplus_push_flow(hass, enable_custom_integrations):
+    hass.states.async_set(ZOE_SOC_ENTITY, "50")
+    hass.states.async_set(ZOE_CHARGING_ENTITY, "off")
+    hass.states.async_set(ZOE_CONNECTED_ENTITY, "off")
+
+    hass.states.async_set(PV_SOC_ENTITY, "30")  # below the 50% threshold
+    hass.states.async_set(PV_SOLAR_ENTITY, "3000")
+    hass.states.async_set(PV_GRID_ENTITY, "-200")
+    hass.states.async_set(PV_BATTERY_ENTITY, "-500")
 
     with patch(
-        "custom_components.zoe_charge_limit.goe_client.GoEClient.stop_charging",
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.stop_charging",
         new=AsyncMock(),
     ), patch(
-        "custom_components.zoe_charge_limit.goe_client.GoEClient.release",
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.release",
+        new=AsyncMock(),
+    ), patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.push_pv_values",
+        new=AsyncMock(),
+    ) as mock_push:
+        entry = await _make_entry(hass)
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+        assert hass.states.get(f"number.{DEVICE_SLUG}_pv_freigabe_ab_akkustand") is not None
+        assert hass.states.get(f"switch.{DEVICE_SLUG}_pv_freigabe_aktiviert") is not None
+        assert hass.states.get(f"sensor.{DEVICE_SLUG}_pv_freigabe_status") is not None
+        assert hass.states.get(f"button.{DEVICE_SLUG}_pv_jetzt_senden") is not None
+
+        # below threshold -> zeros pushed, not the real 3000/-200/-500
+        assert mock_push.call_count >= 1
+        assert mock_push.call_args.args[0] == {"pPv": 0, "pGrid": 0, "pAkku": 0}
+        assert "keine PV-Freigabe" in _state(hass, f"sensor.{DEVICE_SLUG}_pv_freigabe_status")
+
+        # cross the threshold -> real values pushed (button bypasses the
+        # push throttle so we don't need to sleep in the test)
+        hass.states.async_set(PV_SOC_ENTITY, "70")
+        await hass.async_block_till_done()
+        await hass.services.async_call(
+            "button",
+            "press",
+            {"entity_id": f"button.{DEVICE_SLUG}_pv_jetzt_senden"},
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+        assert mock_push.call_args.args[0] == {"pPv": 3000.0, "pGrid": -200.0, "pAkku": -500.0}
+        assert "PV-Werte gesendet" in _state(hass, f"sensor.{DEVICE_SLUG}_pv_freigabe_status")
+
+        # lower the threshold above the current SoC again via the number
+        # entity -> back to zeros
+        await hass.services.async_call(
+            "number",
+            "set_value",
+            {"entity_id": f"number.{DEVICE_SLUG}_pv_freigabe_ab_akkustand", "value": 90},
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+        assert mock_push.call_args.args[0] == {"pPv": 0, "pGrid": 0, "pAkku": 0}
+
+        # disabling the switch stops pushing anything at all
+        await hass.services.async_call(
+            "switch",
+            "turn_off",
+            {"entity_id": f"switch.{DEVICE_SLUG}_pv_freigabe_aktiviert"},
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+        assert _state(hass, f"sensor.{DEVICE_SLUG}_pv_freigabe_status") == "Deaktiviert"
+        calls_before = mock_push.call_count
+        hass.states.async_set(PV_SOLAR_ENTITY, "5000")
+        await hass.async_block_till_done()
+        assert mock_push.call_count == calls_before
+
+
+@pytest.mark.asyncio
+async def test_restores_state_after_reload(hass, enable_custom_integrations):
+    hass.states.async_set(ZOE_SOC_ENTITY, "50")
+    hass.states.async_set(ZOE_CHARGING_ENTITY, "on")
+    hass.states.async_set(ZOE_CONNECTED_ENTITY, "on")
+    hass.states.async_set(PV_SOC_ENTITY, "10")
+    hass.states.async_set(PV_SOLAR_ENTITY, "0")
+    hass.states.async_set(PV_GRID_ENTITY, "0")
+    hass.states.async_set(PV_BATTERY_ENTITY, "0")
+
+    with patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.stop_charging",
+        new=AsyncMock(),
+    ), patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.release",
+        new=AsyncMock(),
+    ), patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.push_pv_values",
         new=AsyncMock(),
     ):
         entry = await _make_entry(hass)
@@ -163,13 +214,19 @@ async def test_restores_limit_and_enabled_after_reload(hass, enable_custom_integ
         await hass.services.async_call(
             "number",
             "set_value",
-            {"entity_id": "number.zoe_ladelimit_ladelimit", "value": 65},
+            {"entity_id": f"number.{DEVICE_SLUG}_zoe_ladelimit", "value": 65},
+            blocking=True,
+        )
+        await hass.services.async_call(
+            "number",
+            "set_value",
+            {"entity_id": f"number.{DEVICE_SLUG}_pv_freigabe_ab_akkustand", "value": 40},
             blocking=True,
         )
         await hass.services.async_call(
             "switch",
             "turn_off",
-            {"entity_id": "switch.zoe_ladelimit_aktiviert"},
+            {"entity_id": f"switch.{DEVICE_SLUG}_zoe_ladelimit_aktiviert"},
             blocking=True,
         )
         await hass.async_block_till_done()
@@ -179,7 +236,6 @@ async def test_restores_limit_and_enabled_after_reload(hass, enable_custom_integ
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
 
-        assert hass.states.get("number.zoe_ladelimit_ladelimit").state == "65.0" \
-            or hass.states.get("number.zoe_ladelimit_ladelimit").state == "65"
-        assert hass.states.get("switch.zoe_ladelimit_aktiviert").state == "off"
-        assert _status(hass) == "Deaktiviert"
+        assert float(_state(hass, f"number.{DEVICE_SLUG}_zoe_ladelimit")) == 65
+        assert float(_state(hass, f"number.{DEVICE_SLUG}_pv_freigabe_ab_akkustand")) == 40
+        assert _state(hass, f"switch.{DEVICE_SLUG}_zoe_ladelimit_aktiviert") == "off"

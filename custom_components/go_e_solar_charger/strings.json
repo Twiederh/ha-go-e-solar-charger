@@ -1,0 +1,69 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "go-e Solar Charger - go-e Verbindung",
+        "description": "IP-Adresse und (falls aktiviert) API-Key des go-e Chargers. Beide Funktionen unten schicken ihre Befehle direkt dorthin, nicht ueber Home Assistant.",
+        "data": {
+          "goe_host": "IP-Adresse / Host des go-e Chargers",
+          "goe_api_key": "go-e API-Key (nur falls aktiviert)"
+        }
+      },
+      "zoe": {
+        "title": "Zoe Ladelimit",
+        "description": "Waehle die bestehenden Sensoren fuer den Ladezustand der Zoe und den Ladestatus des go-e Chargers aus.",
+        "data": {
+          "zoe_soc_entity_id": "Sensor: Batteriestand der Zoe (%)",
+          "zoe_charging_entity_id": "Sensor/Binary-Sensor: laedt der go-e gerade?",
+          "zoe_charging_on_state": "Zustand, der \"laedt\" bedeutet",
+          "zoe_car_connected_entity_id": "Optional: Sensor/Binary-Sensor \"Fahrzeug verbunden\"",
+          "zoe_car_connected_on_state": "Zustand, der \"verbunden\" bedeutet",
+          "zoe_default_limit": "Ladelimit (%)"
+        }
+      },
+      "pv": {
+        "title": "PV-Ueberschuss-Freigabe",
+        "description": "Sensoren der Powerwall fuer Solar-, Netz- und Batterieleistung sowie den Akkustand. Die Werte werden erst an den go-e weitergegeben, wenn der Akkustand die Schwelle erreicht.",
+        "data": {
+          "pv_solar_entity_id": "Sensor: Solarleistung (W)",
+          "pv_grid_entity_id": "Sensor: Netzleistung (W)",
+          "pv_battery_entity_id": "Sensor: Batterieleistung der Powerwall (W)",
+          "pv_soc_entity_id": "Sensor: Akkustand der Powerwall (%)",
+          "pv_default_threshold": "PV-Freigabe ab Akkustand (%)"
+        }
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "go-e Verbindung",
+        "data": {
+          "goe_host": "IP-Adresse / Host des go-e Chargers",
+          "goe_api_key": "go-e API-Key (leer lassen, um den gespeicherten zu behalten)"
+        }
+      },
+      "zoe": {
+        "title": "Zoe Ladelimit",
+        "data": {
+          "zoe_soc_entity_id": "Sensor: Batteriestand der Zoe (%)",
+          "zoe_charging_entity_id": "Sensor/Binary-Sensor: laedt der go-e gerade?",
+          "zoe_charging_on_state": "Zustand, der \"laedt\" bedeutet",
+          "zoe_car_connected_entity_id": "Optional: Sensor/Binary-Sensor \"Fahrzeug verbunden\"",
+          "zoe_car_connected_on_state": "Zustand, der \"verbunden\" bedeutet",
+          "zoe_default_limit": "Ladelimit (%)"
+        }
+      },
+      "pv": {
+        "title": "PV-Ueberschuss-Freigabe",
+        "data": {
+          "pv_solar_entity_id": "Sensor: Solarleistung (W)",
+          "pv_grid_entity_id": "Sensor: Netzleistung (W)",
+          "pv_battery_entity_id": "Sensor: Batterieleistung der Powerwall (W)",
+          "pv_soc_entity_id": "Sensor: Akkustand der Powerwall (%)",
+          "pv_default_threshold": "PV-Freigabe ab Akkustand (%)"
+        }
+      }
+    }
+  }
+}
