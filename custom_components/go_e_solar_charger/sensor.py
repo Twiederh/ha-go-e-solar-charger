@@ -24,7 +24,7 @@ async def async_setup_entry(
 
 class ZoeStatusSensor(SensorEntity):
     _attr_has_entity_name = True
-    _attr_name = "Zoe Ladelimit Status"
+    _attr_name = "Auto Ladelimit Status"
     _attr_icon = "mdi:ev-station"
     _attr_should_poll = False
 

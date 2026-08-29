@@ -84,18 +84,18 @@ async def test_zoe_charge_limit_flow(hass, enable_custom_integrations):
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
 
-        assert hass.states.get(f"number.{DEVICE_SLUG}_zoe_ladelimit") is not None
-        assert hass.states.get(f"switch.{DEVICE_SLUG}_zoe_ladelimit_aktiviert") is not None
-        assert hass.states.get(f"sensor.{DEVICE_SLUG}_zoe_ladelimit_status") is not None
-        assert hass.states.get(f"button.{DEVICE_SLUG}_zoe_jetzt_stoppen") is not None
+        assert hass.states.get(f"number.{DEVICE_SLUG}_auto_ladelimit") is not None
+        assert hass.states.get(f"switch.{DEVICE_SLUG}_auto_ladelimit_aktiviert") is not None
+        assert hass.states.get(f"sensor.{DEVICE_SLUG}_auto_ladelimit_status") is not None
+        assert hass.states.get(f"button.{DEVICE_SLUG}_laden_jetzt_stoppen") is not None
 
-        assert "Laedt" in _state(hass, f"sensor.{DEVICE_SLUG}_zoe_ladelimit_status")
+        assert "Laedt" in _state(hass, f"sensor.{DEVICE_SLUG}_auto_ladelimit_status")
         assert mock_stop.call_count == 0
 
         hass.states.async_set(ZOE_SOC_ENTITY, "80")
         await hass.async_block_till_done()
         assert mock_stop.call_count == 1
-        assert "gestoppt" in _state(hass, f"sensor.{DEVICE_SLUG}_zoe_ladelimit_status")
+        assert "gestoppt" in _state(hass, f"sensor.{DEVICE_SLUG}_auto_ladelimit_status")
 
         hass.states.async_set(ZOE_SOC_ENTITY, "81")
         await hass.async_block_till_done()
@@ -104,7 +104,7 @@ async def test_zoe_charge_limit_flow(hass, enable_custom_integrations):
         await hass.services.async_call(
             "number",
             "set_value",
-            {"entity_id": f"number.{DEVICE_SLUG}_zoe_ladelimit", "value": 90},
+            {"entity_id": f"number.{DEVICE_SLUG}_auto_ladelimit", "value": 90},
             blocking=True,
         )
         await hass.async_block_till_done()
@@ -113,12 +113,12 @@ async def test_zoe_charge_limit_flow(hass, enable_custom_integrations):
         await hass.services.async_call(
             "button",
             "press",
-            {"entity_id": f"button.{DEVICE_SLUG}_zoe_jetzt_stoppen"},
+            {"entity_id": f"button.{DEVICE_SLUG}_laden_jetzt_stoppen"},
             blocking=True,
         )
         await hass.async_block_till_done()
         assert mock_stop.call_count == 2
-        assert _state(hass, f"sensor.{DEVICE_SLUG}_zoe_ladelimit_status") == "Manuell gestoppt"
+        assert _state(hass, f"sensor.{DEVICE_SLUG}_auto_ladelimit_status") == "Manuell gestoppt"
 
 
 @pytest.mark.asyncio
@@ -222,7 +222,7 @@ async def test_restores_state_after_reload(hass, enable_custom_integrations):
         await hass.services.async_call(
             "number",
             "set_value",
-            {"entity_id": f"number.{DEVICE_SLUG}_zoe_ladelimit", "value": 65},
+            {"entity_id": f"number.{DEVICE_SLUG}_auto_ladelimit", "value": 65},
             blocking=True,
         )
         await hass.services.async_call(
@@ -234,7 +234,7 @@ async def test_restores_state_after_reload(hass, enable_custom_integrations):
         await hass.services.async_call(
             "switch",
             "turn_off",
-            {"entity_id": f"switch.{DEVICE_SLUG}_zoe_ladelimit_aktiviert"},
+            {"entity_id": f"switch.{DEVICE_SLUG}_auto_ladelimit_aktiviert"},
             blocking=True,
         )
         await hass.async_block_till_done()
@@ -244,9 +244,9 @@ async def test_restores_state_after_reload(hass, enable_custom_integrations):
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
 
-        assert float(_state(hass, f"number.{DEVICE_SLUG}_zoe_ladelimit")) == 65
+        assert float(_state(hass, f"number.{DEVICE_SLUG}_auto_ladelimit")) == 65
         assert float(_state(hass, f"number.{DEVICE_SLUG}_pv_freigabe_ab_akkustand")) == 40
-        assert _state(hass, f"switch.{DEVICE_SLUG}_zoe_ladelimit_aktiviert") == "off"
+        assert _state(hass, f"switch.{DEVICE_SLUG}_auto_ladelimit_aktiviert") == "off"
 
 
 @pytest.mark.asyncio

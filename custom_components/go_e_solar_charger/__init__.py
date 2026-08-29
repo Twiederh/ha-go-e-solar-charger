@@ -2,10 +2,14 @@
 
 Two independent features, one go-e Charger, one device in the HA UI:
 
-- Zoe charge limit: stops the go-e once the Renault Zoe reaches a
-  configurable SoC, using sensors already provided by other integrations
-  (no direct Powerwall/go-e polling for status here) - see
-  zoe_controller.py / zoe_logic.py. Talks to go-e via "frc" (force state).
+- Auto charge limit: stops the go-e once the car reaches a configurable
+  SoC, using sensors already provided by other integrations (no direct
+  Powerwall/go-e polling for status here) - see zoe_controller.py /
+  zoe_logic.py. Not tied to any particular car brand - any EV exposing a
+  SoC sensor (and ideally a charging/connected sensor) works. Internal
+  module/class names still say "zoe" (this started as a Renault Zoe
+  project) but nothing in the logic is Zoe-specific. Talks to go-e via
+  "frc" (force state).
 - PV-surplus push: feeds pPv/pGrid/pAkku into go-e's own PV-surplus
   charging logic once the Powerwall's SoC is above a configurable
   threshold - see pv_controller.py / pv_logic.py. Talks to go-e via "ids".

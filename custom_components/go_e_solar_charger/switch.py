@@ -24,7 +24,7 @@ async def async_setup_entry(
 
 class ZoeLimitEnableSwitch(SwitchEntity, RestoreEntity):
     _attr_has_entity_name = True
-    _attr_name = "Zoe Ladelimit aktiviert"
+    _attr_name = "Auto Ladelimit aktiviert"
     _attr_icon = "mdi:power"
 
     def __init__(self, controller: ZoeChargeLimitController, entry: ConfigEntry) -> None:

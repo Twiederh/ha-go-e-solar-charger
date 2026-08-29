@@ -10,10 +10,10 @@
         }
       },
       "zoe": {
-        "title": "Zoe Ladelimit",
-        "description": "Waehle die bestehenden Sensoren fuer den Ladezustand der Zoe und den Ladestatus des go-e Chargers aus.",
+        "title": "Auto Ladelimit",
+        "description": "Waehle die bestehenden Sensoren fuer den Ladezustand des Autos und den Ladestatus des go-e Chargers aus. Funktioniert mit jedem E-Auto, das mit SoC- und Lade-Sensor in Home Assistant eingebunden ist.",
         "data": {
-          "zoe_soc_entity_id": "Sensor: Batteriestand der Zoe (%)",
+          "zoe_soc_entity_id": "Sensor: Batteriestand des Autos (%)",
           "zoe_charging_entity_id": "Sensor/Binary-Sensor: laedt der go-e gerade?",
           "zoe_charging_on_state": "Zustand, der \"laedt\" bedeutet",
           "zoe_car_connected_entity_id": "Optional: Sensor/Binary-Sensor \"Fahrzeug verbunden\"",
@@ -44,9 +44,9 @@
         }
       },
       "zoe": {
-        "title": "Zoe Ladelimit",
+        "title": "Auto Ladelimit",
         "data": {
-          "zoe_soc_entity_id": "Sensor: Batteriestand der Zoe (%)",
+          "zoe_soc_entity_id": "Sensor: Batteriestand des Autos (%)",
           "zoe_charging_entity_id": "Sensor/Binary-Sensor: laedt der go-e gerade?",
           "zoe_charging_on_state": "Zustand, der \"laedt\" bedeutet",
           "zoe_car_connected_entity_id": "Optional: Sensor/Binary-Sensor \"Fahrzeug verbunden\"",

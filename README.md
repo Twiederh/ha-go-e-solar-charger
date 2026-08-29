@@ -3,22 +3,33 @@
 Native Home-Assistant-Integration mit zwei unabhaengigen Funktionen rund um
 den go-e Charger:
 
-1. **Zoe Ladelimit** - stoppt den go-e, sobald die Renault Zoe eine
+1. **Auto Ladelimit** - stoppt den go-e, sobald das Elektroauto eine
    einstellbare Batterie-Ladung erreicht hat.
 2. **PV-Ueberschuss-Freigabe** - schickt die Leistungswerte der Powerwall
    (Solar/Netz/Akku) an den go-e, aber erst, wenn der Akkustand der
    Powerwall eine einstellbare Schwelle erreicht hat.
 
-Powerwall, go-e und die Zoe sind bereits als Sensoren in Home Assistant
+Auto, Powerwall und go-e sind bereits als Sensoren in Home Assistant
 integriert - diese Integration liest nur davon. Alle Befehle an den go-e
 (Stopp/Freigabe sowie die PV-Werte) gehen direkt an dessen lokale HTTP-API,
 unabhaengig von Home Assistant.
+
+Nur der go-e selbst ist fest verdrahtet (dessen lokale API). Fuers "Auto
+Ladelimit" reicht jedes Elektroauto, das seinen Batteriestand (und
+idealerweise Lade-/Verbunden-Status) als Sensor in Home Assistant
+bereitstellt - egal ob ueber eine Fahrzeug-Integration, ein anderes
+Ladegeraet oder sonstwie. Fuer "PV-Ueberschuss-Freigabe" reicht ebenso
+jeder Akku/jedes Speichersystem mit Solar-, Netz-, Batterieleistungs- und
+SoC-Sensor - die Powerwall ist hier kein Zwang, nur das, wofuer es gebaut
+wurde. (Intern heissen manche Dateien/Klassen noch "zoe"/"controller" o.ae.,
+weil das Projekt urspruenglich fuer eine Renault Zoe entstand - das ist
+reine Namensgeschichte, die Logik selbst ist markenneutral.)
 
 Eigenstaendiges Zusatzprojekt neben
 [go-e-solar-charger](https://github.com/Twiederh/go-e-solar-charger), dem
 eigenen Docker-Dashboard/Config-Tool mit direkter Powerwall-Gateway-
 Anbindung. Dieses Projekt hier ist die HA-native Variante fuer alle, die
-Powerwall/go-e/Zoe schon in Home Assistant haben.
+Auto/Powerwall/go-e schon in Home Assistant haben.
 
 ## Installation
 
@@ -45,8 +56,8 @@ Powerwall/go-e/Zoe schon in Home Assistant haben.
    Solar Charger" suchen.
 2. Schritt "go-e Verbindung": IP-Adresse des go-e sowie optional dessen
    lokalen API-Key. Diese Verbindung wird von beiden Funktionen genutzt.
-3. Schritt "Zoe Ladelimit":
-   - Sensor fuer den Batteriestand der Zoe (bei dir vermutlich
+3. Schritt "Auto Ladelimit":
+   - Sensor fuer den Batteriestand des Autos (bei dir z. B.
      `sensor.zoe_batterie_soc`)
    - Sensor/Binary-Sensor, der anzeigt, dass der go-e gerade laedt
    - optional: Sensor/Binary-Sensor "Fahrzeug verbunden" (ohne das wird
@@ -64,18 +75,24 @@ ueber "Konfigurieren" bei der Integration anpassen.
 
 ## Erzeugte Entities
 
-### Zoe Ladelimit
+### Auto Ladelimit
 
-- `number.<name>_zoe_ladelimit` - Ladelimit in %, jederzeit im Dashboard
+- `number.<name>_auto_ladelimit` - Ladelimit in %, jederzeit im Dashboard
   aenderbar, bleibt nach einem Neustart erhalten.
-- `switch.<name>_zoe_ladelimit_aktiviert` - schaltet die automatische
+- `switch.<name>_auto_ladelimit_aktiviert` - schaltet die automatische
   Ueberwachung an/aus.
-- `sensor.<name>_zoe_ladelimit_status` - Klartext-Status ("Laedt (62 % /
+- `sensor.<name>_auto_ladelimit_status` - Klartext-Status ("Laedt (62 % /
   Limit 80 %)", "Ladelimit erreicht - Laden gestoppt", "Kein Fahrzeug
   verbunden", ...).
-- `button.<name>_zoe_jetzt_stoppen` - manueller Sofort-Stopp, unabhaengig
+- `button.<name>_laden_jetzt_stoppen` - manueller Sofort-Stopp, unabhaengig
   vom SoC. Praktisch, um die go-e-Verbindung zu testen, ohne auf das echte
   Limit zu warten.
+
+(Diese Namen gelten fuer neu eingerichtete Integrationen. Bei einem
+Update von einer aelteren Version bleiben die Entity-IDs bestehender
+Entities unveraendert - `entity_id`s werden bei der Erstanlage vergeben
+und danach nicht automatisch umbenannt, nur der angezeigte Name
+aktualisiert sich.)
 
 ### PV-Ueberschuss-Freigabe
 
@@ -91,7 +108,7 @@ ueber "Konfigurieren" bei der Integration anpassen.
 
 ## Funktionsweise
 
-### Zoe Ladelimit
+### Auto Ladelimit
 
 Reagiert auf Zustandsaenderungen der ausgewaehlten Sensoren (kein Polling).
 Sobald der SoC das Limit erreicht oder ueberschreitet, waehrend geladen

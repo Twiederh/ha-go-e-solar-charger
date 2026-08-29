@@ -26,7 +26,7 @@ class ZoeStopNowButton(ButtonEntity):
     without having to wait for the real SoC limit to be reached."""
 
     _attr_has_entity_name = True
-    _attr_name = "Zoe Jetzt stoppen"
+    _attr_name = "Laden jetzt stoppen"
     _attr_icon = "mdi:stop-circle-outline"
 
     def __init__(self, controller: ZoeChargeLimitController, entry: ConfigEntry) -> None:

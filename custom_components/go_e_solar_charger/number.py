@@ -24,7 +24,7 @@ async def async_setup_entry(
 
 class ZoeLimitNumber(NumberEntity, RestoreEntity):
     _attr_has_entity_name = True
-    _attr_name = "Zoe Ladelimit"
+    _attr_name = "Auto Ladelimit"
     _attr_native_min_value = MIN_ZOE_LIMIT
     _attr_native_max_value = MAX_ZOE_LIMIT
     _attr_native_step = 1
