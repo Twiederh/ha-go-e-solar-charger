@@ -167,13 +167,19 @@ class GoESolarChargerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 
 class GoESolarChargerOptionsFlow(config_entries.OptionsFlow):
+    # Deliberately NOT storing the entry as `self.config_entry`: recent Home
+    # Assistant versions turned that name into a read-only property that HA
+    # itself populates, and a custom integration assigning to it in
+    # __init__ now raises AttributeError (seen as a generic 500 "Server got
+    # itself in trouble" when opening "Configure"). Keeping our own
+    # `_entry` attribute avoids the collision on every HA version.
     def __init__(self, config_entry: ConfigEntry) -> None:
-        self.config_entry = config_entry
+        self._entry = config_entry
         self._data: dict = {}
 
     @property
     def _current(self) -> dict:
-        return {**self.config_entry.data, **self.config_entry.options}
+        return {**self._entry.data, **self._entry.options}
 
     async def async_step_init(self, user_input=None):
         if user_input is not None:
