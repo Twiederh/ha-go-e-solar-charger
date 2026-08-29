@@ -59,12 +59,24 @@ class TeslaChargingController:
         # ensures the switch is driven into a defined state at startup
         # regardless of whatever it happened to be left at.
         self._last_applied: Optional[bool] = None
+        self._suppressed_by = None
 
         self._unsub_track = None
 
     @property
     def signal(self) -> str:
         return f"{SIGNAL_TESLA_STATUS_UPDATE}_{self.entry.entry_id}"
+
+    @property
+    def configured(self) -> bool:
+        return self._configured
+
+    def set_suppressor(self, controller) -> None:
+        """The cheap-grid-charging controller, if any - while its
+        `suppress_tesla` is true, this controller's own PV/export-based
+        gating goes inert and the Tesla switch is driven exclusively via
+        async_force_charge() instead."""
+        self._suppressed_by = controller
 
     async def async_setup(self) -> None:
         if not self._configured:
@@ -120,6 +132,11 @@ class TeslaChargingController:
             async_dispatcher_send(self.hass, self.signal)
             return
 
+        if self._suppressed_by is not None and self._suppressed_by.suppress_tesla:
+            self.status_text = "Pausiert (Guenstigstrom-Tag aktiv)"
+            async_dispatcher_send(self.hass, self.signal)
+            return
+
         result = evaluate(
             TeslaChargeInput(
                 enabled=self.enabled,
@@ -163,3 +180,18 @@ class TeslaChargingController:
         the switch connection without waiting for the next sensor
         change."""
         await self.async_evaluate()
+
+    async def async_force_charge(self, on: bool) -> None:
+        """Exclusive-control channel used by the cheap-grid-charging
+        controller while it suppresses this controller's own PV/export-
+        based gating (see set_suppressor above) - bypasses that
+        suppression entirely, since this call *is* the suppressor acting."""
+        if on != self._last_applied:
+            await self._set_tesla_switch(on)
+            self._last_applied = on
+        self.status_text = (
+            "Erzwungen (Guenstigstrom-Fenster aktiv)"
+            if on
+            else "Pausiert (Guenstigstrom-Fenster)"
+        )
+        async_dispatcher_send(self.hass, self.signal)

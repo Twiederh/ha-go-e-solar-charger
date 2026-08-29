@@ -48,11 +48,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})
     zoe_controller = ZoeChargeLimitController(hass, entry)
     pv_controller = PvSurplusController(hass, entry)
-    cheap_controller = CheapGridChargingController(
-        hass, entry, on_frc_changed=zoe_controller.async_evaluate
-    )
     tesla_controller = TeslaChargingController(hass, entry, pv_controller)
+    cheap_controller = CheapGridChargingController(
+        hass,
+        entry,
+        on_frc_changed=zoe_controller.async_evaluate,
+        tesla_controller=tesla_controller,
+    )
     pv_controller.set_suppressor(cheap_controller)
+    tesla_controller.set_suppressor(cheap_controller)
     hass.data[DOMAIN][entry.entry_id] = {
         "zoe": zoe_controller,
         "pv": pv_controller,

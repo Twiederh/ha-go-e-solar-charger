@@ -8,12 +8,14 @@ from .cheap_controller import CheapGridChargingController
 from .const import (
     DOMAIN,
     MAX_CHEAP_FORECAST_THRESHOLD,
+    MAX_CHEAP_POWERWALL_CHARGE_THRESHOLD,
     MAX_CHEAP_PRICE_THRESHOLD,
     MAX_PV_EXPORT_OVERRIDE_THRESHOLD,
     MAX_PV_THRESHOLD,
     MAX_TESLA_GRID_RELEASE_THRESHOLD,
     MAX_ZOE_LIMIT,
     MIN_CHEAP_FORECAST_THRESHOLD,
+    MIN_CHEAP_POWERWALL_CHARGE_THRESHOLD,
     MIN_CHEAP_PRICE_THRESHOLD,
     MIN_PV_EXPORT_OVERRIDE_THRESHOLD,
     MIN_PV_THRESHOLD,
@@ -37,6 +39,7 @@ async def async_setup_entry(
             PvExportOverrideNumber(controllers["pv"], entry),
             CheapForecastThresholdNumber(controllers["cheap"], entry),
             CheapPriceThresholdNumber(controllers["cheap"], entry),
+            CheapPowerwallChargeThresholdNumber(controllers["cheap"], entry),
             TeslaGridReleaseThresholdNumber(controllers["tesla"], entry),
         ]
     )
@@ -210,6 +213,40 @@ class CheapPriceThresholdNumber(NumberEntity, RestoreEntity):
         self._attr_native_value = value
         self.async_write_ha_state()
         await self._controller.async_set_price_threshold(value)
+
+
+class CheapPowerwallChargeThresholdNumber(NumberEntity, RestoreEntity):
+    _attr_has_entity_name = True
+    _attr_name = "Guenstigstrom Powerwall-Ladeleistung-Schwelle"
+    _attr_native_min_value = MIN_CHEAP_POWERWALL_CHARGE_THRESHOLD
+    _attr_native_max_value = MAX_CHEAP_POWERWALL_CHARGE_THRESHOLD
+    _attr_native_step = 50
+    _attr_native_unit_of_measurement = "W"
+    _attr_mode = NumberMode.BOX
+    _attr_icon = "mdi:home-battery"
+
+    def __init__(self, controller: CheapGridChargingController, entry: ConfigEntry) -> None:
+        self._controller = controller
+        self._attr_unique_id = f"{entry.entry_id}_cheap_powerwall_charge_threshold"
+        self._attr_native_value = controller.powerwall_charge_threshold
+        self._attr_device_info = device_info(entry)
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        last_state = await self.async_get_last_state()
+        if last_state is not None and last_state.state not in ("unknown", "unavailable"):
+            try:
+                value = float(last_state.state)
+            except ValueError:
+                value = None
+            if value is not None:
+                self._attr_native_value = value
+                self._controller.powerwall_charge_threshold = value
+
+    async def async_set_native_value(self, value: float) -> None:
+        self._attr_native_value = value
+        self.async_write_ha_state()
+        await self._controller.async_set_powerwall_charge_threshold(value)
 
 
 class TeslaGridReleaseThresholdNumber(NumberEntity, RestoreEntity):

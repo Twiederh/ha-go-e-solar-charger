@@ -1,7 +1,7 @@
 {
   "domain": "go_e_solar_charger",
   "name": "go-e Solar Charger",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "config_flow": true,
   "documentation": "https://github.com/Twiederh/ha-go-e-solar-charger",
   "issue_tracker": "https://github.com/Twiederh/ha-go-e-solar-charger/issues",

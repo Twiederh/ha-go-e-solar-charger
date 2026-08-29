@@ -7,6 +7,7 @@ from .const import (
     CONF_CHEAP_FORECAST_ENTITY,
     CONF_CHEAP_FORECAST_THRESHOLD,
     CONF_CHEAP_GOE_PV_SWITCH_ENTITY,
+    CONF_CHEAP_POWERWALL_CHARGE_THRESHOLD,
     CONF_CHEAP_PRICE_ENTITY,
     CONF_CHEAP_PRICE_THRESHOLD,
     CONF_GOE_API_KEY,
@@ -26,6 +27,7 @@ from .const import (
     CONF_ZOE_DEFAULT_LIMIT,
     CONF_ZOE_SOC_ENTITY,
     DEFAULT_CHEAP_FORECAST_THRESHOLD,
+    DEFAULT_CHEAP_POWERWALL_CHARGE_THRESHOLD,
     DEFAULT_CHEAP_PRICE_THRESHOLD,
     DEFAULT_PV_EXPORT_OVERRIDE_THRESHOLD,
     DEFAULT_PV_THRESHOLD,
@@ -35,12 +37,14 @@ from .const import (
     DEFAULT_ZOE_LIMIT,
     DOMAIN,
     MAX_CHEAP_FORECAST_THRESHOLD,
+    MAX_CHEAP_POWERWALL_CHARGE_THRESHOLD,
     MAX_CHEAP_PRICE_THRESHOLD,
     MAX_PV_EXPORT_OVERRIDE_THRESHOLD,
     MAX_PV_THRESHOLD,
     MAX_TESLA_GRID_RELEASE_THRESHOLD,
     MAX_ZOE_LIMIT,
     MIN_CHEAP_FORECAST_THRESHOLD,
+    MIN_CHEAP_POWERWALL_CHARGE_THRESHOLD,
     MIN_CHEAP_PRICE_THRESHOLD,
     MIN_PV_EXPORT_OVERRIDE_THRESHOLD,
     MIN_PV_THRESHOLD,
@@ -198,6 +202,21 @@ def _cheap_schema(defaults: dict) -> vol.Schema:
                     unit_of_measurement="ct",
                 )
             ),
+            vol.Optional(
+                CONF_CHEAP_POWERWALL_CHARGE_THRESHOLD,
+                default=defaults.get(
+                    CONF_CHEAP_POWERWALL_CHARGE_THRESHOLD,
+                    DEFAULT_CHEAP_POWERWALL_CHARGE_THRESHOLD,
+                ),
+            ): selector.NumberSelector(
+                selector.NumberSelectorConfig(
+                    min=MIN_CHEAP_POWERWALL_CHARGE_THRESHOLD,
+                    max=MAX_CHEAP_POWERWALL_CHARGE_THRESHOLD,
+                    step=50,
+                    mode=selector.NumberSelectorMode.BOX,
+                    unit_of_measurement="W",
+                )
+            ),
         }
     )
 
@@ -243,6 +262,10 @@ def _normalize(data: dict) -> dict:
         data[CONF_CHEAP_FORECAST_THRESHOLD] = int(data[CONF_CHEAP_FORECAST_THRESHOLD])
     if CONF_CHEAP_PRICE_THRESHOLD in data:
         data[CONF_CHEAP_PRICE_THRESHOLD] = float(data[CONF_CHEAP_PRICE_THRESHOLD])
+    if CONF_CHEAP_POWERWALL_CHARGE_THRESHOLD in data:
+        data[CONF_CHEAP_POWERWALL_CHARGE_THRESHOLD] = int(
+            data[CONF_CHEAP_POWERWALL_CHARGE_THRESHOLD]
+        )
     if CONF_TESLA_GRID_RELEASE_THRESHOLD in data:
         data[CONF_TESLA_GRID_RELEASE_THRESHOLD] = int(data[CONF_TESLA_GRID_RELEASE_THRESHOLD])
     return data

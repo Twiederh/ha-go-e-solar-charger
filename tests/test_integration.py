@@ -19,6 +19,8 @@ from homeassistant.util import dt as dt_util
 from custom_components.go_e_solar_charger.const import (
     CHEAP_FORECAST_EVAL_HOUR,
     CHEAP_FORECAST_EVAL_MINUTE,
+    CHEAP_PRIORITY_AUTO_FIRST,
+    CHEAP_PRIORITY_TESLA_FIRST,
     DOMAIN,
     PV_PUSH_KEEPALIVE_INTERVAL_SECONDS,
 )
@@ -690,3 +692,219 @@ async def test_tesla_not_configured_is_inert(hass, enable_custom_integrations):
         assert _state(hass, f"sensor.{DEVICE_SLUG}_tesla_ladesteuerung_status") == (
             'Nicht konfiguriert - bitte unter "Konfigurieren" den Tesla-Lade-Schalter angeben.'
         )
+
+
+@pytest.mark.asyncio
+async def test_cheap_window_forces_both_cars_and_suppresses_tesla_own_logic(
+    hass, enable_custom_integrations
+):
+    """On a low-solar day, once the cheap window opens, both the go-e car
+    and the Tesla must be force-charged (when the Powerwall itself isn't
+    charging) - and while that suppression is active, the Tesla's own PV/
+    export-based gating must stay completely inert, even if its own
+    sensors change in a way that would otherwise flip its decision."""
+    hass.states.async_set(ZOE_SOC_ENTITY, "50")
+    hass.states.async_set(ZOE_CHARGING_ENTITY, "off")
+    hass.states.async_set(ZOE_CONNECTED_ENTITY, "on")
+    hass.states.async_set(PV_SOC_ENTITY, "10")  # below Tesla's own threshold
+    hass.states.async_set(PV_SOLAR_ENTITY, "0")
+    hass.states.async_set(PV_GRID_ENTITY, "0")
+    hass.states.async_set(PV_BATTERY_ENTITY, "0")  # Powerwall not charging itself
+
+    hass.states.async_set(CHEAP_FORECAST_ENTITY, "18")  # below the 30 kWh threshold
+    hass.states.async_set(CHEAP_PRICE_ENTITY, CHEAP_PRICE_EXPENSIVE)
+    hass.states.async_set(CHEAP_GOE_PV_SWITCH_ENTITY, "on")
+
+    with patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.stop_charging",
+        new=AsyncMock(),
+    ), patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.release",
+        new=AsyncMock(),
+    ), patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.force_charging_on",
+        new=AsyncMock(),
+    ) as mock_force_on, patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.push_pv_values",
+        new=AsyncMock(),
+    ), patch(
+        "custom_components.go_e_solar_charger.cheap_controller.CheapGridChargingController._set_goe_pv_switch",
+        new=AsyncMock(),
+    ), patch(
+        "custom_components.go_e_solar_charger.tesla_controller.TeslaChargingController._set_tesla_switch",
+        new=AsyncMock(),
+    ) as mock_set_tesla:
+        entry = await _make_entry(hass)
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+        # Before the window: Tesla's own logic runs normally (stopped,
+        # below its own SoC threshold with no export).
+        assert mock_set_tesla.call_args.args == (False,)
+
+        _fire_evening_eval(hass)
+        await hass.async_block_till_done()
+        hass.states.async_set(CHEAP_PRICE_ENTITY, CHEAP_PRICE_CHEAP)
+        await hass.async_block_till_done()
+
+        assert mock_force_on.call_count == 1
+        assert mock_set_tesla.call_args.args == (True,)
+        assert "Auto Ladelimit" in _state(hass, f"sensor.{DEVICE_SLUG}_guenstigstrom_status")
+        assert "Tesla" in _state(hass, f"sensor.{DEVICE_SLUG}_guenstigstrom_status")
+        assert "Erzwungen" in _state(hass, f"sensor.{DEVICE_SLUG}_tesla_ladesteuerung_status")
+
+        # Change a sensor that would normally flip the Tesla's own PV/
+        # export-based gating (SoC now above its threshold) - while
+        # suppressed, this must not touch the Tesla switch at all.
+        calls_before = mock_set_tesla.call_count
+        hass.states.async_set(PV_SOC_ENTITY, "90")
+        await hass.async_block_till_done()
+        assert mock_set_tesla.call_count == calls_before
+
+
+@pytest.mark.asyncio
+async def test_cheap_powerwall_arbitration_and_priority_select(hass, enable_custom_integrations):
+    """While the Powerwall itself charges from the grid (above the
+    configured threshold), only one of the two cars may draw power at a
+    time - decided by the live-adjustable priority select entity - and
+    both resume once the Powerwall stops charging itself."""
+    hass.states.async_set(ZOE_SOC_ENTITY, "50")
+    hass.states.async_set(ZOE_CHARGING_ENTITY, "off")
+    hass.states.async_set(ZOE_CONNECTED_ENTITY, "on")
+    hass.states.async_set(PV_SOC_ENTITY, "10")
+    hass.states.async_set(PV_SOLAR_ENTITY, "0")
+    hass.states.async_set(PV_GRID_ENTITY, "0")
+    hass.states.async_set(PV_BATTERY_ENTITY, "0")  # Powerwall not charging itself yet
+
+    hass.states.async_set(CHEAP_FORECAST_ENTITY, "18")
+    hass.states.async_set(CHEAP_PRICE_ENTITY, CHEAP_PRICE_EXPENSIVE)
+    hass.states.async_set(CHEAP_GOE_PV_SWITCH_ENTITY, "on")
+
+    with patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.stop_charging",
+        new=AsyncMock(),
+    ) as mock_stop, patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.release",
+        new=AsyncMock(),
+    ), patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.force_charging_on",
+        new=AsyncMock(),
+    ) as mock_force_on, patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.push_pv_values",
+        new=AsyncMock(),
+    ), patch(
+        "custom_components.go_e_solar_charger.cheap_controller.CheapGridChargingController._set_goe_pv_switch",
+        new=AsyncMock(),
+    ), patch(
+        "custom_components.go_e_solar_charger.tesla_controller.TeslaChargingController._set_tesla_switch",
+        new=AsyncMock(),
+    ) as mock_set_tesla:
+        entry = await _make_entry(hass)
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+        priority_entity = f"select.{DEVICE_SLUG}_guenstigstrom_ladeprioritaet"
+        assert hass.states.get(priority_entity) is not None
+        assert _state(hass, priority_entity) == CHEAP_PRIORITY_AUTO_FIRST
+
+        _fire_evening_eval(hass)
+        await hass.async_block_till_done()
+        hass.states.async_set(CHEAP_PRICE_ENTITY, CHEAP_PRICE_CHEAP)
+        await hass.async_block_till_done()
+
+        # Both charging, Powerwall not yet charging itself.
+        assert mock_force_on.call_count == 1
+        assert mock_set_tesla.call_args.args == (True,)
+
+        # Powerwall starts charging itself above the 200 W default
+        # threshold -> Auto Ladelimit (default priority) keeps going, the
+        # Tesla gets paused.
+        hass.states.async_set(PV_BATTERY_ENTITY, "-500")
+        await hass.async_block_till_done()
+        assert mock_set_tesla.call_args.args == (False,)
+        assert mock_stop.call_count == 0  # Zoe never actually stopped
+        assert "Tesla pausiert" in _state(hass, f"sensor.{DEVICE_SLUG}_guenstigstrom_status")
+
+        # Powerwall stops charging itself again -> both resume.
+        hass.states.async_set(PV_BATTERY_ENTITY, "0")
+        await hass.async_block_till_done()
+        assert mock_set_tesla.call_args.args == (True,)
+
+        # Switch priority to "Tesla zuerst" live, while the Powerwall is
+        # charging itself -> now Auto Ladelimit gets paused instead.
+        hass.states.async_set(PV_BATTERY_ENTITY, "-500")
+        await hass.async_block_till_done()
+        assert mock_set_tesla.call_args.args == (False,)  # still paused (Auto has priority)
+
+        await hass.services.async_call(
+            "select",
+            "select_option",
+            {"entity_id": priority_entity, "option": CHEAP_PRIORITY_TESLA_FIRST},
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+        assert _state(hass, priority_entity) == CHEAP_PRIORITY_TESLA_FIRST
+        assert mock_set_tesla.call_args.args == (True,)  # Tesla now has priority
+        assert mock_stop.call_count == 1  # Auto Ladelimit got paused (force-off, not neutral)
+
+
+@pytest.mark.asyncio
+async def test_cheap_disable_hands_back_both_cars(hass, enable_custom_integrations):
+    """Disabling the feature mid-window with both cars forced must hand
+    control back to each car's own logic immediately - the go-e via
+    release() (neutral), the Tesla via its own controller's evaluate()."""
+    hass.states.async_set(ZOE_SOC_ENTITY, "50")
+    hass.states.async_set(ZOE_CHARGING_ENTITY, "off")
+    hass.states.async_set(ZOE_CONNECTED_ENTITY, "on")
+    hass.states.async_set(PV_SOC_ENTITY, "10")
+    hass.states.async_set(PV_SOLAR_ENTITY, "0")
+    hass.states.async_set(PV_GRID_ENTITY, "0")
+    hass.states.async_set(PV_BATTERY_ENTITY, "0")
+
+    hass.states.async_set(CHEAP_FORECAST_ENTITY, "18")
+    hass.states.async_set(CHEAP_PRICE_ENTITY, CHEAP_PRICE_EXPENSIVE)
+    hass.states.async_set(CHEAP_GOE_PV_SWITCH_ENTITY, "on")
+
+    with patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.stop_charging",
+        new=AsyncMock(),
+    ), patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.release",
+        new=AsyncMock(),
+    ) as mock_release, patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.force_charging_on",
+        new=AsyncMock(),
+    ), patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.push_pv_values",
+        new=AsyncMock(),
+    ), patch(
+        "custom_components.go_e_solar_charger.cheap_controller.CheapGridChargingController._set_goe_pv_switch",
+        new=AsyncMock(),
+    ) as mock_set_switch, patch(
+        "custom_components.go_e_solar_charger.tesla_controller.TeslaChargingController._set_tesla_switch",
+        new=AsyncMock(),
+    ) as mock_set_tesla:
+        entry = await _make_entry(hass)
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+        _fire_evening_eval(hass)
+        await hass.async_block_till_done()
+        hass.states.async_set(CHEAP_PRICE_ENTITY, CHEAP_PRICE_CHEAP)
+        await hass.async_block_till_done()
+
+        assert mock_set_tesla.call_args.args == (True,)
+
+        await hass.services.async_call(
+            "switch",
+            "turn_off",
+            {"entity_id": f"switch.{DEVICE_SLUG}_guenstigstrom_aktiviert"},
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+        assert mock_release.call_count >= 1  # go-e handed back (neutral), not force-off
+        assert mock_set_switch.call_args.args == (True,)  # go-e's own PV switch back on
+        # Tesla's own logic re-evaluated: below its threshold, no export -> stopped.
+        assert mock_set_tesla.call_args.args == (False,)
+        assert _state(hass, f"sensor.{DEVICE_SLUG}_guenstigstrom_status") == "Deaktiviert"

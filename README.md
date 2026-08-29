@@ -12,10 +12,14 @@ den go-e Charger:
 3. **Guenstigstrom-Laden** (optional) - an Tagen mit schlechter
    Solar-Vorhersage wird die PV-Ueberschuss-Freigabe fuer den ganzen Tag
    pausiert und stattdessen im guenstigen Strompreis-Fenster mit Netzstrom
-   geladen.
+   geladen - fuer das Auto Ladelimit UND, falls konfiguriert, den Tesla.
+   Laedt die Powerwall dabei selbst mit Netzstrom, darf nur eines der
+   beiden Fahrzeuge gleichzeitig laden; welches, ist live per
+   Prioritaets-Auswahl einstellbar.
 4. **Tesla-Ladesteuerung** (optional) - startet/stoppt das Laden eines
    zweiten Fahrzeugs mit eigener Ladeloesung ueber einen einfachen
-   Schalter, abhaengig vom Akkustand der Powerwall.
+   Schalter, abhaengig vom Akkustand der Powerwall (und, im
+   Guenstigstrom-Fenster, von Funktion 3 mit gesteuert).
 
 Auto, Powerwall und go-e sind bereits als Sensoren in Home Assistant
 integriert - diese Integration liest nur davon. Alle Befehle an den go-e
@@ -145,15 +149,26 @@ aktualisiert sich.)
   erhalten.
 - `number.<name>_guenstigstrom_preis_schwelle` - Preis-Schwelle in ct,
   ebenso persistent.
+- `number.<name>_guenstigstrom_powerwall_ladeleistung_schwelle` - ab
+  welcher Ladeleistung (W) die Powerwall als "laedt selbst gerade" gilt
+  (Standard 200 W), ebenso persistent.
+- `select.<name>_guenstigstrom_ladeprioritaet` - welches Fahrzeug
+  weiterlaedt, wenn die Powerwall selbst laedt und nur eines der beiden
+  gleichzeitig darf ("Auto Ladelimit zuerst" [Standard] oder "Tesla
+  zuerst"), jederzeit im Dashboard umstellbar und wirkt sofort, auch
+  mitten im laufenden Guenstigfenster; bleibt nach einem Neustart
+  erhalten.
 - `switch.<name>_guenstigstrom_aktiviert` - schaltet die Funktion an/aus.
   Beim Ausschalten waehrend eines aktiven Guenstigfensters wird die
-  Kontrolle sofort zurueckgegeben (go-e-Zwangsladen beendet, PV-Schalter
-  wieder an), statt bis zum naechsten Fenster zu warten.
+  Kontrolle sofort an beide Fahrzeuge zurueckgegeben (go-e-Zwangsladen
+  beendet, PV-Schalter wieder an, Tesla wieder nach eigener Logik),
+  statt bis zum naechsten Fenster zu warten.
 - `sensor.<name>_guenstigstrom_status` - Klartext-Status ("Normaler Tag
   (Vorhersage 45.0 kWh >= 30 kWh)", "Guenstigstrom-Tag (...) - wartet auf
-  Guenstigfenster", "Guenstigfenster aktiv - Laden erzwungen (...)",
-  "Guenstigfenster aktiv, aber kein Fahrzeug verbunden", "Nicht
-  konfiguriert - ...").
+  Guenstigfenster", "Guenstigfenster aktiv - Auto Ladelimit und Tesla
+  erzwungen", "Guenstigfenster aktiv - Auto Ladelimit erzwungen, Tesla
+  pausiert (Powerwall laedt)", "Guenstigfenster aktiv, aber kein Fahrzeug
+  verbunden", "Nicht konfiguriert - ...").
 - `button.<name>_guenstigstrom_jetzt_testen` - sampelt die Solar-Vorhersage
   sofort neu (statt auf die taegliche Auswertungszeit zu warten) und wendet
   den aktuellen Fenster-Status direkt an - praktisch zum Testen der
@@ -247,16 +262,42 @@ Zwei unabhaengige taegliche Rhythmen steuern dieses Feature:
 
 Ist "heute" laut dieser Entscheidung ein Guenstigstrom-Tag, passiert
 Folgendes fuer den **ganzen Tag**: der go-e-eigene
-PV-Ueberschussladen-Schalter wird ausgeschaltet, und die eigene
+PV-Ueberschussladen-Schalter wird ausgeschaltet, die eigene
 PV-Ueberschuss-Freigabe dieser Integration sendet ueberhaupt keine Werte
-mehr (auch nicht die Sicherheits-Nullen) an den go-e. Zusaetzlich wird
-**nur beim Betreten/Verlassen des Guenstigfensters** (nicht kontinuierlich)
-`frc=On` gesetzt, solange ein Fahrzeug verbunden ist, und beim Verlassen
-wieder auf `frc=Neutral` zurueckgesetzt - damit das unabhaengige
-SoC-Ladelimit ("Auto Ladelimit") jederzeit weiterhin stoppen kann, ohne
-dass sich beide Funktionen gegenseitig ueberschreiben. Ist "heute" kein
-Guenstigstrom-Tag, bleibt alles wie gehabt (PV-Ueberschuss-Freigabe aktiv,
-kein erzwungenes Laden).
+mehr (auch nicht die Sicherheits-Nullen) an den go-e, und die eigene
+PV-/Einspeise-Logik der Tesla-Ladesteuerung wird ebenfalls stillgelegt -
+ab jetzt steuert ausschliesslich das Guenstigstrom-Laden beide Fahrzeuge.
+
+**Nur beim Betreten/Verlassen des Guenstigfensters** (nicht kontinuierlich)
+wird beim go-e `frc=On` gesetzt, solange ein Fahrzeug verbunden ist, und
+beim Verlassen wieder auf `frc=Neutral` zurueckgesetzt - damit das
+unabhaengige SoC-Ladelimit ("Auto Ladelimit") jederzeit weiterhin stoppen
+kann, ohne dass sich beide Funktionen gegenseitig ueberschreiben. Ist ein
+Tesla konfiguriert, wird sein Lade-Schalter beim selben Fenster-Ein-/
+Austritt analog ein-/ausgeschaltet.
+
+Laedt die Powerwall dabei selbst mit Netzstrom (Ladeleistung ueber der
+"Guenstigstrom Powerwall-Ladeleistung-Schwelle", Standard 200 W - z. B.
+bis zu ihrem eigenen Hardware-Limit von 13,5 kW), darf nur eines der
+beiden Fahrzeuge gleichzeitig laden, um die Powerwall nicht zusaetzlich zu
+belasten: welches, entscheidet die "Guenstigstrom Ladepriorisierung"
+(Standard: Auto Ladelimit zuerst, dann Tesla). Beginnt die Powerwall
+mitten im Guenstigfenster selbst zu laden, waehrend beide Fahrzeuge
+laden, wird das nicht-priorisierte sofort pausiert (`frc=Off` bzw. Tesla-
+Schalter aus); stoppt die Powerwall ihr eigenes Laden wieder, laden beide
+sofort weiter. Die Prioritaet laesst sich jederzeit live umstellen (auch
+mitten im Fenster) - eine Aenderung wendet die neue Prioritaet sofort an,
+statt auf die naechste Aenderung zu warten. Ist nur eines der beiden
+Fahrzeuge angeschlossen/konfiguriert, betrifft diese Beschraenkung es
+nicht - "nur eines gleichzeitig" ergibt nur Sinn, wenn ueberhaupt zwei
+Kandidaten da sind. Kann der Akkustand-Sensor der Powerwall nicht gelesen
+werden, wird sicherheitshalber angenommen, dass sie laedt (lieber ein
+Fahrzeug unnoetig pausiert als ein moegliches Netz-/Hardware-Limit zu
+ueberschreiten).
+
+Ist "heute" kein Guenstigstrom-Tag, bleibt alles wie gehabt
+(PV-Ueberschuss-Freigabe aktiv, Tesla-Ladesteuerung nach ihrer eigenen
+Logik, kein erzwungenes Laden).
 
 Die reine Entscheidungslogik steckt in `cheap_logic.py`, frei von
 Home-Assistant-Importen.
@@ -279,6 +320,13 @@ kein go-e-aehnliches Watchdog-Verhalten, das ein staendiges Neusenden
 braucht. Die reine Entscheidungslogik steckt in `tesla_logic.py`, frei von
 Home-Assistant-Importen.
 
+An einem Guenstigstrom-Tag (siehe oben) wird diese eigene PV-/Einspeise-
+Logik fuer den ganzen Tag stillgelegt - der Schalter wird dann
+ausschliesslich vom Guenstigstrom-Laden gesteuert (erzwungenes Laden im
+Fenster, ggf. pausiert waehrend die Powerwall selbst laedt). Ausserhalb
+eines Guenstigstrom-Tags bzw. nach dessen Ende arbeitet diese Funktion
+wie oben beschrieben unveraendert weiter.
+
 ## Getestet, aber nicht an echter Hardware
 
 Gegen einen echten go-e wurde das noch nicht ausprobiert - dafuer hat diese
@@ -294,7 +342,8 @@ Session keinen Netzwerkzugriff auf dein Heimnetz. Stattdessen:
 - `custom_components/go_e_solar_charger/cheap_logic.py` ebenso, mit 20+
   Szenarien (Vorhersage ueber/unter Schwelle, Preis-Uebergaenge, taeglicher
   Rollover in beide Richtungen, Fenster-Ein-/Austritt mit/ohne verbundenes
-  Fahrzeug, ...).
+  Fahrzeug, Powerwall-Ladearbitrierung in beide Prioritaets-Richtungen,
+  ...).
 - `custom_components/go_e_solar_charger/tesla_logic.py` ebenso (SoC ueber/
   unter Schwelle, Einspeise-Freigabe trotz niedrigem SoC, deaktiviert, SoC
   nicht verfuegbar, ...).
@@ -307,9 +356,12 @@ Session keinen Netzwerkzugriff auf dein Heimnetz. Stattdessen:
   Guenstigstrom-Tageszyklus (Abend-Latch -> Mitternacht-Rollover ->
   Fenster-Ende -> naechster Abend-Latch -> naechster Rollover zurueck),
   der PV-Sofort-Freigabe bei hoher Einspeisung, der Tesla-Ladesteuerung
-  (SoC- und Einspeise-Bedingungen, Deaktivieren) sowie der Faelle einer
-  bestehenden, noch nicht auf die jeweiligen Features konfigurierten
-  Installation.
+  (SoC- und Einspeise-Bedingungen, Deaktivieren), der Einbindung des Tesla
+  in das Guenstigstrom-Laden (beide Fahrzeuge erzwungen, Unterdrueckung
+  der eigenen Tesla-Logik, Powerwall-Ladearbitrierung inklusive Umschalten
+  der Prioritaet live per Auswahl-Entitaet, Zurueckgeben der Kontrolle an
+  beide Fahrzeuge beim Deaktivieren) sowie der Faelle einer bestehenden,
+  noch nicht auf die jeweiligen Features konfigurierten Installation.
 
 Zum Ausfuehren:
 

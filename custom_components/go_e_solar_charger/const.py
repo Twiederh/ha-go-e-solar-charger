@@ -76,6 +76,21 @@ DEFAULT_CHEAP_PRICE_THRESHOLD = 20
 MIN_CHEAP_PRICE_THRESHOLD = 0
 MAX_CHEAP_PRICE_THRESHOLD = 100
 
+# The Powerwall can charge itself from the grid too (up to its own
+# hardware limit, e.g. 13.5 kW) - while it draws more than this, only one
+# of the two forced-charging cars may run at a time.
+CONF_CHEAP_POWERWALL_CHARGE_THRESHOLD = "cheap_powerwall_charge_threshold_w"
+DEFAULT_CHEAP_POWERWALL_CHARGE_THRESHOLD = 200
+MIN_CHEAP_POWERWALL_CHARGE_THRESHOLD = 0
+MAX_CHEAP_POWERWALL_CHARGE_THRESHOLD = 15000
+
+# Which car keeps charging when the Powerwall itself is charging and only
+# one may run - a live-adjustable select entity (see select.py), not part
+# of the config flow: the default below is the only "setup-time" choice.
+CHEAP_PRIORITY_AUTO_FIRST = "Auto Ladelimit zuerst"
+CHEAP_PRIORITY_TESLA_FIRST = "Tesla zuerst"
+DEFAULT_CHEAP_CAR_PRIORITY = CHEAP_PRIORITY_AUTO_FIRST
+
 # Fixed daily time (local) at which "is tomorrow a low-solar day" gets
 # latched from the forecast sensor's current reading. Needs to be well
 # before midnight: forecast integrations typically roll their "tomorrow"
@@ -90,7 +105,7 @@ FRC_NEUTRAL = 0  # let go-e's own charging logic decide
 FRC_OFF = 1  # force charging off, regardless of what the normal logic wants
 FRC_ON = 2  # force charging on, regardless of PV surplus or amp settings
 
-PLATFORMS = ["number", "switch", "sensor", "button"]
+PLATFORMS = ["number", "switch", "sensor", "button", "select"]
 
 SIGNAL_ZOE_STATUS_UPDATE = f"{DOMAIN}_zoe_status_update"
 SIGNAL_PV_STATUS_UPDATE = f"{DOMAIN}_pv_status_update"
