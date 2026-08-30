@@ -329,32 +329,38 @@ Home-Assistant-Importen.
 
 ### Tesla-Ladesteuerung
 
-Der Tesla hat eine eigene, solargestuetzte Ladeloesung und sein eigenes
-Ladelimit (`number.tesla_ladelimit`, ausserhalb dieser Integration) - hier
-wird nur ein einfacher Schalter (`switch.tesla_aufladung`) an-/ausgestellt.
+**Die tagsueber aktive PV-/Akkustand-Regelung dieser Funktion ist aktuell
+deaktiviert** (`tesla_controller.DAYTIME_GATING_ENABLED = False`) - dazu
+gleich mehr. Weiterhin aktiv und von dieser Abschaltung unberuehrt ist das
+Guenstigstrom-Nachtladen: an einem Guenstigstrom-Tag (siehe oben) wird der
+Tesla weiterhin im Guenstigfenster erzwungen geladen bzw. ggf. pausiert,
+waehrend die Powerwall selbst laedt.
+
+Urspruenglich gedacht war diese Funktion so: der Tesla hat eine eigene,
+solargestuetzte Ladeloesung und sein eigenes Ladelimit
+(`number.tesla_ladelimit`, ausserhalb dieser Integration) - hier sollte nur
+ein einfacher Schalter (`switch.tesla_aufladung`) an-/ausgestellt werden.
 Solange der Akkustand der Powerwall unter der (mit "PV-Ueberschuss-
-Freigabe" geteilten, live gelesenen) Schwelle liegt, bleibt der Schalter
-aus - ausser die Powerwall speist bereits mindestens die "Laden trotzdem
-freigeben ab Einspeisung"-Schwelle (Standard 1400 W) ins Netz ein, dann
-wird trotzdem freigegeben. Erreicht die Powerwall selbst die Schwelle,
-bleibt der Schalter dauerhaft an, unabhaengig von der Einspeisung.
+Freigabe" geteilten, live gelesenen) Schwelle liegt, sollte der Schalter
+aus bleiben - ausser die Powerwall speist bereits mindestens die "Laden
+trotzdem freigeben ab Einspeisung"-Schwelle (Standard 1400 W) ins Netz ein.
 
-Der Schalter wird bei jeder tatsaechlichen Aenderung der Entscheidung sofort
-umgeschaltet - und zusaetzlich alle paar Minuten erneut gesetzt, auch wenn
-sich an der Entscheidung selbst nichts geaendert hat. Grund: der Tesla kann
-das Laden trotz ausgeschaltetem Schalter von sich aus wieder aufnehmen (z. B.
-ueber sein eigenes Zeitplan-/Smart-Charging) - ein einmaliges Ausschalten
-reicht dafuer nicht aus. Die Wiederholung ist auf `REASSERT_INTERVAL_SECONDS`
-(Standard 240 s) gedrosselt, damit sie nicht bei jeder einzelnen
-Sensor-Aktualisierung erneut feuert. Die reine Entscheidungslogik steckt in
-`tesla_logic.py`, frei von Home-Assistant-Importen.
-
-An einem Guenstigstrom-Tag (siehe oben) wird diese eigene PV-/Einspeise-
-Logik fuer den ganzen Tag stillgelegt - der Schalter wird dann
-ausschliesslich vom Guenstigstrom-Laden gesteuert (erzwungenes Laden im
-Fenster, ggf. pausiert waehrend die Powerwall selbst laedt). Ausserhalb
-eines Guenstigstrom-Tags bzw. nach dessen Ende arbeitet diese Funktion
-wie oben beschrieben unveraendert weiter.
+In der Praxis hat sich gezeigt, dass ein einmaliges Ausschalten nicht reicht:
+der Tesla kann das Laden trotz ausgeschaltetem Schalter von sich aus wieder
+aufnehmen (z. B. ueber sein eigenes Zeitplan-/Smart-Charging). Eine erste
+Abhilfe - den Schalter alle paar Minuten erneut zu setzen, auch ohne
+Aenderung der Entscheidung (`REASSERT_INTERVAL_SECONDS`, Standard 240 s) -
+hat das echte Umschalten zwar korrigiert, dabei aber tatsaechlich
+wiederholtes Stoppen/Neustarten des laufenden Ladevorgangs verursacht, statt
+nur ein kosmetisches Status-Flackern zu beheben. Das war schlimmer als das
+urspruengliche Problem, daher ist die gesamte tagsueber aktive Regelung
+vorerst abgeschaltet: der Tesla laedt tagsueber unbeeinflusst von dieser
+Integration nach seiner eigenen Logik. Der Mechanismus (inkl. der
+Wiederholung) bleibt im Code erhalten (`tesla_logic.py`,
+`tesla_controller.py`) und ist ueber die eine Konstante wieder aktivierbar,
+falls spaeter ein besserer Ansatz gefunden wird (z. B. beim Tesla selbst
+erfragen, ob er tatsaechlich laedt, statt den Schalter blind erneut zu
+setzen).
 
 ## Getestet, aber nicht an echter Hardware
 

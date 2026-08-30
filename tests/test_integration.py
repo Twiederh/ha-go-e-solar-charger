@@ -614,7 +614,13 @@ async def test_tesla_charging_follows_powerwall_soc_and_grid_export(
     """The Tesla's own charging switch should stay off while the Powerwall
     is below its (shared, live) SoC threshold, unless enough power is
     already going into the grid to be worth using regardless - and come
-    back on once the Powerwall itself reaches that threshold."""
+    back on once the Powerwall itself reaches that threshold.
+
+    This whole daytime PV/SoC-based gating is disabled by default for now
+    (see tesla_controller.DAYTIME_GATING_ENABLED - it caused real
+    start/stop cycling of the Tesla's actual charging, not just a status
+    text flicker) - this test patches the flag back on to keep the
+    underlying mechanism verified for whenever it's re-enabled."""
     hass.states.async_set(ZOE_SOC_ENTITY, "50")
     hass.states.async_set(ZOE_CHARGING_ENTITY, "off")
     hass.states.async_set(ZOE_CONNECTED_ENTITY, "off")
@@ -636,7 +642,9 @@ async def test_tesla_charging_follows_powerwall_soc_and_grid_export(
     ), patch(
         "custom_components.go_e_solar_charger.tesla_controller.TeslaChargingController._set_tesla_switch",
         new=AsyncMock(),
-    ) as mock_set_tesla:
+    ) as mock_set_tesla, patch(
+        "custom_components.go_e_solar_charger.tesla_controller.DAYTIME_GATING_ENABLED", True
+    ):
         entry = await _make_entry(hass)
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
@@ -694,7 +702,13 @@ async def test_tesla_reasserts_stop_periodically(hass, enable_custom_integration
     time) - so a one-shot switch.turn_off isn't enough. As long as the
     decision hasn't changed, the switch call must still be repeated once
     REASSERT_INTERVAL_SECONDS has passed, but not on every single
-    evaluation in between (that would spam the Tesla API)."""
+    evaluation in between (that would spam the Tesla API).
+
+    This whole daytime gating (reassertion included) is disabled by
+    default for now: it turned out to cause real, repeated start/stop
+    cycling of the actual charging session, which is worse than the
+    original cosmetic-looking symptom. Patches the flag back on to keep
+    this mechanism verified for whenever it's revisited."""
     hass.states.async_set(ZOE_SOC_ENTITY, "50")
     hass.states.async_set(ZOE_CHARGING_ENTITY, "off")
     hass.states.async_set(ZOE_CONNECTED_ENTITY, "off")
@@ -721,6 +735,8 @@ async def test_tesla_reasserts_stop_periodically(hass, enable_custom_integration
     ) as mock_set_tesla, patch(
         "custom_components.go_e_solar_charger.tesla_controller.time.monotonic",
         new=lambda: fake_now[0],
+    ), patch(
+        "custom_components.go_e_solar_charger.tesla_controller.DAYTIME_GATING_ENABLED", True
     ):
         entry = await _make_entry(hass)
         assert await hass.config_entries.async_setup(entry.entry_id)
@@ -744,6 +760,51 @@ async def test_tesla_reasserts_stop_periodically(hass, enable_custom_integration
         await hass.async_block_till_done()
         assert mock_set_tesla.call_args.args == (False,)
         assert mock_set_tesla.call_count == calls_after_setup + 1
+
+
+@pytest.mark.asyncio
+async def test_tesla_daytime_gating_disabled_by_default(hass, enable_custom_integrations):
+    """The daytime PV/SoC-based gating is switched off by default (see
+    tesla_controller.DAYTIME_GATING_ENABLED) - the Tesla's own charging
+    logic runs unmanaged during the day regardless of how wildly the
+    Powerwall SoC/grid sensors swing, and the status sensor says so."""
+    hass.states.async_set(ZOE_SOC_ENTITY, "50")
+    hass.states.async_set(ZOE_CHARGING_ENTITY, "off")
+    hass.states.async_set(ZOE_CONNECTED_ENTITY, "off")
+
+    hass.states.async_set(PV_SOC_ENTITY, "30")  # would be well below the 50 % threshold
+    hass.states.async_set(PV_SOLAR_ENTITY, "0")
+    hass.states.async_set(PV_GRID_ENTITY, "-200")
+    hass.states.async_set(PV_BATTERY_ENTITY, "0")
+
+    with patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.stop_charging",
+        new=AsyncMock(),
+    ), patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.release",
+        new=AsyncMock(),
+    ), patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.push_pv_values",
+        new=AsyncMock(),
+    ), patch(
+        "custom_components.go_e_solar_charger.tesla_controller.TeslaChargingController._set_tesla_switch",
+        new=AsyncMock(),
+    ) as mock_set_tesla:
+        entry = await _make_entry(hass)
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+        assert mock_set_tesla.call_count == 0
+        assert "vorerst deaktiviert" in _state(
+            hass, f"sensor.{DEVICE_SLUG}_tesla_ladesteuerung_status"
+        )
+
+        # Even a swing that would normally flip the gating decision (SoC
+        # above threshold, high export) must not touch the switch at all.
+        hass.states.async_set(PV_SOC_ENTITY, "95")
+        hass.states.async_set(PV_GRID_ENTITY, "-5000")
+        await hass.async_block_till_done()
+        assert mock_set_tesla.call_count == 0
 
 
 @pytest.mark.asyncio
@@ -992,8 +1053,11 @@ async def test_cheap_disable_hands_back_both_cars(hass, enable_custom_integratio
 
         assert mock_release.call_count >= 1  # go-e handed back (neutral), not force-off
         assert mock_set_switch.call_args.args == (True,)  # go-e's own PV switch back on
-        # Tesla's own logic re-evaluated: below its threshold, no export -> stopped.
-        assert mock_set_tesla.call_args.args == (False,)
+        # Tesla's daytime PV/SoC gating is disabled for now (see
+        # tesla_controller.DAYTIME_GATING_ENABLED), so re-evaluating it is
+        # a no-op - the switch is simply left as the cheap window last
+        # forced it (still charging) rather than being taken over again.
+        assert mock_set_tesla.call_args.args == (True,)
         assert _state(hass, f"sensor.{DEVICE_SLUG}_guenstigstrom_status") == "Deaktiviert"
 
 

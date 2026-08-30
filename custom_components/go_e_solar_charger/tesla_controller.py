@@ -6,12 +6,20 @@ on its own to resume charging while it's plugged in - e.g. its own
 scheduled/smart charging - regardless of what our switch last told it.
 Observed in practice: the SoC-gate decision stayed "gestoppt" for hours
 straight while the Powerwall charged from 59 % to 84 %, yet the car kept
-(re)starting its own charging in that time. So on top of applying the
-decision immediately when it changes, this also re-asserts the current
-decision periodically (throttled to REASSERT_INTERVAL_SECONDS) as new
-evaluations come in - similar in spirit to the PV-surplus push's
-keepalive (see pv_controller.py), just enforcing a state instead of
-resending values.
+(re)starting its own charging in that time.
+
+Periodically re-asserting the decision (see REASSERT_INTERVAL_SECONDS
+below) does correct that - but it does so by actually re-issuing a stop
+command to a Tesla that may have resumed charging in the meantime, which
+means real, repeated start/stop cycling of the actual charging session
+every time that happens, not just a corrected status text. That trade-off
+turned out to be worse than the original problem, so this whole daytime
+PV-surplus gating is switched off for now (DAYTIME_GATING_ENABLED = False)
+at the user's request, while the mechanism stays in place, ready to be
+re-enabled (and hopefully improved - e.g. by asking the Tesla whether it's
+actually charging rather than blindly re-sending the switch command) later.
+The Guenstigstrom night-charging window (cheap_controller.py, via
+async_force_charge below) is a separate, unaffected code path.
 """
 import logging
 import time
@@ -48,6 +56,18 @@ NOT_CONFIGURED_TEXT = (
 # caught within one evaluation cycle - but not so tight that it would spam
 # the Tesla API if those sensors happened to update much faster.
 REASSERT_INTERVAL_SECONDS = 240
+
+# Temporarily takes the whole daytime PV/SoC-based gating out of service -
+# see the module docstring above for why. While False, async_evaluate()
+# never touches the switch on its own initiative; the Tesla's own charging
+# logic runs completely unmanaged during the day. async_force_charge()
+# (the Guenstigstrom night-window's exclusive control channel) is a
+# separate code path and keeps working regardless of this flag.
+DAYTIME_GATING_ENABLED = False
+STATUS_TEXT_DAYTIME_DISABLED = (
+    "Tagsueber vorerst deaktiviert - nur das Guenstigstrom-Nachtladen "
+    "steuert dieses Fahrzeug"
+)
 
 
 class TeslaChargingController:
@@ -110,10 +130,13 @@ class TeslaChargingController:
             async_dispatcher_send(self.hass, self.signal)
             return
 
-        entities = [self._soc_entity]
-        if self._grid_entity:
-            entities.append(self._grid_entity)
-        self._unsub_track = async_track_state_change_event(self.hass, entities, self._handle_event)
+        if DAYTIME_GATING_ENABLED:
+            entities = [self._soc_entity]
+            if self._grid_entity:
+                entities.append(self._grid_entity)
+            self._unsub_track = async_track_state_change_event(
+                self.hass, entities, self._handle_event
+            )
         await self.async_evaluate()
 
     def async_unload(self) -> None:
@@ -160,6 +183,11 @@ class TeslaChargingController:
 
         if self._suppressed_by is not None and self._suppressed_by.suppress_tesla:
             self.status_text = "Pausiert (Guenstigstrom-Tag aktiv)"
+            async_dispatcher_send(self.hass, self.signal)
+            return
+
+        if not DAYTIME_GATING_ENABLED:
+            self.status_text = STATUS_TEXT_DAYTIME_DISABLED
             async_dispatcher_send(self.hass, self.signal)
             return
 
