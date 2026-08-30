@@ -35,7 +35,6 @@ from .cheap_logic import (
 from .const import (
     CHEAP_FORECAST_EVAL_HOUR,
     CHEAP_FORECAST_EVAL_MINUTE,
-    CHEAP_PRIORITY_TESLA_FIRST,
     CONF_CHEAP_FORECAST_ENTITY,
     CONF_CHEAP_FORECAST_THRESHOLD,
     CONF_CHEAP_GOE_PV_SWITCH_ENTITY,
@@ -47,11 +46,12 @@ from .const import (
     CONF_PV_BATTERY_ENTITY,
     CONF_ZOE_CAR_CONNECTED_ENTITY,
     CONF_ZOE_CAR_CONNECTED_ON_STATE,
-    DEFAULT_CHEAP_CAR_PRIORITY,
     DEFAULT_CHEAP_FORECAST_THRESHOLD,
     DEFAULT_CHEAP_POWERWALL_CHARGE_THRESHOLD,
     DEFAULT_CHEAP_PRICE_THRESHOLD,
+    DEFAULT_TESLA_CAR_NAME,
     DEFAULT_ZOE_CAR_CONNECTED_ON_STATE,
+    DEFAULT_ZOE_CAR_NAME,
     SIGNAL_CHEAP_STATUS_UPDATE,
 )
 from .goe_client import GoEClient
@@ -78,11 +78,13 @@ class CheapGridChargingController:
         entry: ConfigEntry,
         on_frc_changed=None,
         tesla_controller=None,
+        zoe_controller=None,
     ) -> None:
         self.hass = hass
         self.entry = entry
         self._on_frc_changed = on_frc_changed
         self._tesla_controller = tesla_controller
+        self._zoe_controller = zoe_controller
         config = {**entry.data, **entry.options}
         self._forecast_entity = config.get(CONF_CHEAP_FORECAST_ENTITY)
         self._price_entity = config.get(CONF_CHEAP_PRICE_ENTITY)
@@ -112,8 +114,25 @@ class CheapGridChargingController:
         self.powerwall_charge_threshold: float = config.get(
             CONF_CHEAP_POWERWALL_CHARGE_THRESHOLD, DEFAULT_CHEAP_POWERWALL_CHARGE_THRESHOLD
         )
+        # Priority option labels, built from each car's (possibly
+        # customized) display name - e.g. "Zoe Ladelimit zuerst" if the
+        # go-e car was named "Zoe". Falls back to the default names if the
+        # respective controller wasn't passed in (shouldn't happen outside
+        # tests exercising this controller in isolation).
+        self.zoe_car_label: str = (
+            self._zoe_controller.car_label
+            if self._zoe_controller is not None
+            else f"{DEFAULT_ZOE_CAR_NAME} Ladelimit"
+        )
+        self.tesla_car_label: str = (
+            self._tesla_controller.car_name
+            if self._tesla_controller is not None
+            else DEFAULT_TESLA_CAR_NAME
+        )
+        self.priority_option_zoe_first: str = f"{self.zoe_car_label} zuerst"
+        self.priority_option_tesla_first: str = f"{self.tesla_car_label} zuerst"
         # Live-adjustable via select.py, not part of the config flow.
-        self.car_priority: str = DEFAULT_CHEAP_CAR_PRIORITY
+        self.car_priority: str = self.priority_option_zoe_first
         self.enabled: bool = True
         self.status_text: str = "Initialisiere ..."
 
@@ -227,7 +246,7 @@ class CheapGridChargingController:
         return self._tesla_controller is not None and self._tesla_controller.configured
 
     def _zoe_has_priority(self) -> bool:
-        return self.car_priority != CHEAP_PRIORITY_TESLA_FIRST
+        return self.car_priority != self.priority_option_tesla_first
 
     def _window_edge_input(self, *, entering: bool, leaving: bool) -> WindowEdgeInput:
         return WindowEdgeInput(
@@ -352,7 +371,9 @@ class CheapGridChargingController:
             else:
                 await self._goe.stop_charging()
         except Exception as exc:  # noqa: BLE001
-            _LOGGER.warning("Konnte Guenstigstrom-Laden (Auto Ladelimit) nicht umschalten: %s", exc)
+            _LOGGER.warning(
+                "Konnte Guenstigstrom-Laden (%s) nicht umschalten: %s", self.zoe_car_label, exc
+            )
         if self._on_frc_changed:
             await self._on_frc_changed()
 
@@ -412,6 +433,8 @@ class CheapGridChargingController:
             zoe_charging=self._zoe_charging,
             tesla_charging=self._tesla_charging,
             powerwall_charging=self._read_powerwall_charging(),
+            zoe_car_label=self.zoe_car_label,
+            tesla_car_label=self.tesla_car_label,
         )
         async_dispatcher_send(self.hass, self.signal)
 

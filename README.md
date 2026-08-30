@@ -37,6 +37,16 @@ wurde. (Intern heissen manche Dateien/Klassen noch "zoe"/"controller" o.ae.,
 weil das Projekt urspruenglich fuer eine Renault Zoe entstand - das ist
 reine Namensgeschichte, die Logik selbst ist markenneutral.)
 
+Beide Autos lassen sich frei benennen (Schritte "Auto Ladelimit" bzw.
+"Tesla-Ladesteuerung" unter "Konfigurieren", Felder "Name dieses Autos"/
+"Name dieses Fahrzeugs") - der gewaehlte Name erscheint dann ueberall dort,
+wo bisher "Auto Ladelimit" bzw. "Tesla" stand: in den Namen aller
+zugehoerigen Entitaeten (Zahl, Schalter, Sensor, Tasten), in den Optionen
+der Guenstigstrom-Ladepriorisierung und im Klartext-Status des
+Guenstigstrom-Ladens. Leer lassen behaelt die bisherigen Standardnamen
+("Auto Ladelimit" bzw. "Tesla") bei - bestehende Installationen sind davon
+also nicht betroffen.
+
 Eigenstaendiges Zusatzprojekt neben
 [go-e-solar-charger](https://github.com/Twiederh/go-e-solar-charger), dem
 eigenen Docker-Dashboard/Config-Tool mit direkter Powerwall-Gateway-
@@ -119,11 +129,15 @@ aktivieren.
   vom SoC. Praktisch, um die go-e-Verbindung zu testen, ohne auf das echte
   Limit zu warten.
 
-(Diese Namen gelten fuer neu eingerichtete Integrationen. Bei einem
-Update von einer aelteren Version bleiben die Entity-IDs bestehender
-Entities unveraendert - `entity_id`s werden bei der Erstanlage vergeben
-und danach nicht automatisch umbenannt, nur der angezeigte Name
-aktualisiert sich.)
+(Diese Namen gelten fuer neu eingerichtete Integrationen mit dem
+Standardnamen "Auto" fuer dieses Auto. Bei einem Update von einer aelteren
+Version bleiben die Entity-IDs bestehender Entities unveraendert -
+`entity_id`s werden bei der Erstanlage vergeben und danach nicht
+automatisch umbenannt, nur der angezeigte Name aktualisiert sich. Das gilt
+auch, wenn du dem Auto unter "Konfigurieren" nachtraeglich einen eigenen
+Namen gibst: die angezeigten Namen ("Zoe Ladelimit" statt "Auto
+Ladelimit" usw.) aktualisieren sich sofort, die `entity_id`s bleiben wie
+sie sind.)
 
 ### PV-Ueberschuss-Freigabe
 

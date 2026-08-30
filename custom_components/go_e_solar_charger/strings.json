@@ -11,8 +11,9 @@
       },
       "zoe": {
         "title": "Auto Ladelimit",
-        "description": "Waehle die bestehenden Sensoren fuer den Ladezustand des Autos und den Ladestatus des go-e Chargers aus. Funktioniert mit jedem E-Auto, das mit SoC- und Lade-Sensor in Home Assistant eingebunden ist.",
+        "description": "Waehle die bestehenden Sensoren fuer den Ladezustand des Autos und den Ladestatus des go-e Chargers aus. Funktioniert mit jedem E-Auto, das mit SoC- und Lade-Sensor in Home Assistant eingebunden ist. Der Name ist frei waehlbar und erscheint in allen Entitaeten dieses Autos.",
         "data": {
+          "zoe_car_name": "Name dieses Autos (frei waehlbar, z. B. \"Zoe\")",
           "zoe_soc_entity_id": "Sensor: Batteriestand des Autos (%)",
           "zoe_charging_entity_id": "Sensor/Binary-Sensor: laedt der go-e gerade?",
           "zoe_charging_on_state": "Zustand, der \"laedt\" bedeutet",
@@ -47,8 +48,9 @@
       },
       "tesla": {
         "title": "Tesla-Ladesteuerung",
-        "description": "Optional: startet/stoppt das Laden eines zweiten Fahrzeugs (z. B. Tesla) ueber einen einfachen Schalter, sobald die Powerwall unter der oben in \"PV-Ueberschuss-Freigabe\" eingestellten Mindestladung liegt - ausser es wird bereits genug ins Netz eingespeist. Das Fahrzeug regelt sein eigenes Ladelimit selbst. Wird auch in das Guenstigstrom-Laden oben mit einbezogen, sobald hier ein Schalter angegeben ist. Feld leer lassen, um dieses Feature (vorerst) nicht zu nutzen.",
+        "description": "Optional: startet/stoppt das Laden eines zweiten Fahrzeugs (z. B. Tesla) ueber einen einfachen Schalter, sobald die Powerwall unter der oben in \"PV-Ueberschuss-Freigabe\" eingestellten Mindestladung liegt - ausser es wird bereits genug ins Netz eingespeist. Das Fahrzeug regelt sein eigenes Ladelimit selbst. Wird auch in das Guenstigstrom-Laden oben mit einbezogen, sobald hier ein Schalter angegeben ist. Der Name ist frei waehlbar und erscheint in allen Entitaeten dieses Fahrzeugs. Schalter-Feld leer lassen, um dieses Feature (vorerst) nicht zu nutzen.",
         "data": {
+          "tesla_car_name": "Name dieses Fahrzeugs (frei waehlbar, z. B. \"Model 3\")",
           "tesla_switch_entity_id": "Schalter: Laden des Fahrzeugs (z. B. switch.tesla_aufladung)",
           "tesla_grid_release_threshold_w": "Laden trotzdem freigeben ab Einspeisung (W)"
         }
@@ -67,6 +69,7 @@
       "zoe": {
         "title": "Auto Ladelimit",
         "data": {
+          "zoe_car_name": "Name dieses Autos (frei waehlbar, z. B. \"Zoe\")",
           "zoe_soc_entity_id": "Sensor: Batteriestand des Autos (%)",
           "zoe_charging_entity_id": "Sensor/Binary-Sensor: laedt der go-e gerade?",
           "zoe_charging_on_state": "Zustand, der \"laedt\" bedeutet",
@@ -100,6 +103,7 @@
       "tesla": {
         "title": "Tesla-Ladesteuerung",
         "data": {
+          "tesla_car_name": "Name dieses Fahrzeugs (frei waehlbar, z. B. \"Model 3\")",
           "tesla_switch_entity_id": "Schalter: Laden des Fahrzeugs (z. B. switch.tesla_aufladung)",
           "tesla_grid_release_threshold_w": "Laden trotzdem freigeben ab Einspeisung (W)"
         }

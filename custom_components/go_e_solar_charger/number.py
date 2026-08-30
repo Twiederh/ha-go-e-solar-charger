@@ -47,7 +47,6 @@ async def async_setup_entry(
 
 class ZoeLimitNumber(NumberEntity, RestoreEntity):
     _attr_has_entity_name = True
-    _attr_name = "Auto Ladelimit"
     _attr_native_min_value = MIN_ZOE_LIMIT
     _attr_native_max_value = MAX_ZOE_LIMIT
     _attr_native_step = 1
@@ -58,6 +57,7 @@ class ZoeLimitNumber(NumberEntity, RestoreEntity):
     def __init__(self, controller: ZoeChargeLimitController, entry: ConfigEntry) -> None:
         self._controller = controller
         self._attr_unique_id = f"{entry.entry_id}_zoe_limit"
+        self._attr_name = controller.car_label
         self._attr_native_value = controller.limit
         self._attr_device_info = device_info(entry)
 
@@ -251,7 +251,6 @@ class CheapPowerwallChargeThresholdNumber(NumberEntity, RestoreEntity):
 
 class TeslaGridReleaseThresholdNumber(NumberEntity, RestoreEntity):
     _attr_has_entity_name = True
-    _attr_name = "Tesla Netz-Freigabe"
     _attr_native_min_value = MIN_TESLA_GRID_RELEASE_THRESHOLD
     _attr_native_max_value = MAX_TESLA_GRID_RELEASE_THRESHOLD
     _attr_native_step = 50
@@ -262,6 +261,7 @@ class TeslaGridReleaseThresholdNumber(NumberEntity, RestoreEntity):
     def __init__(self, controller: TeslaChargingController, entry: ConfigEntry) -> None:
         self._controller = controller
         self._attr_unique_id = f"{entry.entry_id}_tesla_grid_release_threshold"
+        self._attr_name = f"{controller.car_name} Netz-Freigabe"
         self._attr_native_value = controller.grid_release_threshold
         self._attr_device_info = device_info(entry)
 

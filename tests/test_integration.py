@@ -81,14 +81,21 @@ def _state(hass, entity_id):
 
 
 def _fire_evening_eval(hass, day_offset=0):
-    """`async_track_time_change` schedules its next occurrence 24h after
-    the last one actually fired (real event-loop time), so firing the same
-    day's target a second time in one test never fires again - each
-    subsequent call in a test needs its own day_offset to land on the
-    occurrence the tracker is actually now waiting for."""
-    target = dt_util.now().replace(
+    """`async_track_time_change` schedules its *next* occurrence relative to
+    real wall-clock time at registration - today's eval time if that's
+    still ahead of now, otherwise tomorrow's. Compute the same way here
+    (instead of always assuming "today"), or this flakes depending on what
+    time of day the test happens to run. `async_track_time_change` then
+    schedules its following occurrence 24h after whatever actually fired,
+    so each subsequent call in a test needs its own day_offset to land on
+    the occurrence the tracker is now waiting for."""
+    now = dt_util.now()
+    target = now.replace(
         hour=CHEAP_FORECAST_EVAL_HOUR, minute=CHEAP_FORECAST_EVAL_MINUTE, second=0, microsecond=0
-    ) + timedelta(days=day_offset)
+    )
+    if target <= now:
+        target += timedelta(days=1)
+    target += timedelta(days=day_offset)
     async_fire_time_changed(hass, target)
 
 
@@ -908,3 +915,75 @@ async def test_cheap_disable_hands_back_both_cars(hass, enable_custom_integratio
         # Tesla's own logic re-evaluated: below its threshold, no export -> stopped.
         assert mock_set_tesla.call_args.args == (False,)
         assert _state(hass, f"sensor.{DEVICE_SLUG}_guenstigstrom_status") == "Deaktiviert"
+
+
+@pytest.mark.asyncio
+async def test_custom_car_names_appear_everywhere(hass, enable_custom_integrations):
+    """Both cars can be freely renamed (zoe_car_name/tesla_car_name) - the
+    custom names must show up in their own entities' friendly names, in
+    the priority select's options, and in the cheap-grid-charging status
+    text, instead of the hardcoded "Auto Ladelimit"/"Tesla" defaults."""
+    hass.states.async_set(ZOE_SOC_ENTITY, "50")
+    hass.states.async_set(ZOE_CHARGING_ENTITY, "off")
+    hass.states.async_set(ZOE_CONNECTED_ENTITY, "on")
+    hass.states.async_set(PV_SOC_ENTITY, "10")
+    hass.states.async_set(PV_SOLAR_ENTITY, "0")
+    hass.states.async_set(PV_GRID_ENTITY, "0")
+    hass.states.async_set(PV_BATTERY_ENTITY, "0")  # Powerwall not charging itself
+
+    hass.states.async_set(CHEAP_FORECAST_ENTITY, "18")
+    hass.states.async_set(CHEAP_PRICE_ENTITY, CHEAP_PRICE_EXPENSIVE)
+    hass.states.async_set(CHEAP_GOE_PV_SWITCH_ENTITY, "on")
+
+    with patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.stop_charging",
+        new=AsyncMock(),
+    ), patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.release",
+        new=AsyncMock(),
+    ), patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.force_charging_on",
+        new=AsyncMock(),
+    ), patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.push_pv_values",
+        new=AsyncMock(),
+    ), patch(
+        "custom_components.go_e_solar_charger.cheap_controller.CheapGridChargingController._set_goe_pv_switch",
+        new=AsyncMock(),
+    ), patch(
+        "custom_components.go_e_solar_charger.tesla_controller.TeslaChargingController._set_tesla_switch",
+        new=AsyncMock(),
+    ):
+        entry = await _make_entry(hass, zoe_car_name="Zoe", tesla_car_name="Model 3")
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+        # Zoe's own entities carry the custom name.
+        assert hass.states.get(f"number.{DEVICE_SLUG}_zoe_ladelimit") is not None
+        assert hass.states.get(f"switch.{DEVICE_SLUG}_zoe_ladelimit_aktiviert") is not None
+        assert hass.states.get(f"sensor.{DEVICE_SLUG}_zoe_ladelimit_status") is not None
+
+        # Tesla's (here "Model 3") own entities carry the custom name too.
+        assert hass.states.get(f"number.{DEVICE_SLUG}_model_3_netz_freigabe") is not None
+        assert (
+            hass.states.get(f"switch.{DEVICE_SLUG}_model_3_ladesteuerung_aktiviert") is not None
+        )
+        assert hass.states.get(f"sensor.{DEVICE_SLUG}_model_3_ladesteuerung_status") is not None
+        assert hass.states.get(f"button.{DEVICE_SLUG}_model_3_jetzt_pruefen") is not None
+
+        # The priority select's options/default reflect the custom names.
+        priority_entity = f"select.{DEVICE_SLUG}_guenstigstrom_ladeprioritaet"
+        priority_state = hass.states.get(priority_entity)
+        assert priority_state is not None
+        assert priority_state.attributes["options"] == ["Zoe Ladelimit zuerst", "Model 3 zuerst"]
+        assert priority_state.state == "Zoe Ladelimit zuerst"
+
+        # The cheap-grid-charging status text uses the custom names too.
+        _fire_evening_eval(hass)
+        await hass.async_block_till_done()
+        hass.states.async_set(CHEAP_PRICE_ENTITY, CHEAP_PRICE_CHEAP)
+        await hass.async_block_till_done()
+
+        status = _state(hass, f"sensor.{DEVICE_SLUG}_guenstigstrom_status")
+        assert "Zoe Ladelimit" in status
+        assert "Model 3" in status

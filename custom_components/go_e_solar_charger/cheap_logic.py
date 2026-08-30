@@ -168,6 +168,8 @@ def status_text(
     zoe_charging: bool,
     tesla_charging: bool,
     powerwall_charging: bool,
+    zoe_car_label: str = "Auto Ladelimit",
+    tesla_car_label: str = "Tesla",
 ) -> str:
     if not enabled:
         return "Deaktiviert"
@@ -196,11 +198,11 @@ def status_text(
 
     cars = []
     if zoe_charging:
-        cars.append("Auto Ladelimit")
+        cars.append(zoe_car_label)
     if tesla_charging:
-        cars.append("Tesla")
+        cars.append(tesla_car_label)
     text = f"Guenstigfenster aktiv - {' und '.join(cars)} erzwungen"
     if tesla_configured and powerwall_charging and zoe_charging != tesla_charging:
-        paused = "Tesla" if zoe_charging else "Auto Ladelimit"
+        paused = tesla_car_label if zoe_charging else zoe_car_label
         text += f", {paused} pausiert (Powerwall laedt)"
     return text

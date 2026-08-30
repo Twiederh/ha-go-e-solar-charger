@@ -13,9 +13,15 @@ CONF_ZOE_CHARGING_ON_STATE = "zoe_charging_on_state"
 CONF_ZOE_CAR_CONNECTED_ENTITY = "zoe_car_connected_entity_id"
 CONF_ZOE_CAR_CONNECTED_ON_STATE = "zoe_car_connected_on_state"
 CONF_ZOE_DEFAULT_LIMIT = "zoe_default_limit"
+# Free-text display name for this car - shown in its entity names (e.g.
+# "<name> Ladelimit") and wherever the cheap-grid-charging feature refers
+# to it by name. "Auto" (-> "Auto Ladelimit") keeps every existing default
+# entity name/slug unchanged for installations that don't set this.
+CONF_ZOE_CAR_NAME = "zoe_car_name"
 
 DEFAULT_ZOE_CHARGING_ON_STATE = "on"
 DEFAULT_ZOE_CAR_CONNECTED_ON_STATE = "on"
+DEFAULT_ZOE_CAR_NAME = "Auto"
 DEFAULT_ZOE_LIMIT = 80
 MIN_ZOE_LIMIT = 20
 MAX_ZOE_LIMIT = 100
@@ -53,10 +59,16 @@ PV_PUSH_KEEPALIVE_INTERVAL_SECONDS = 4
 # integration's scope; all this feature does is start/stop it. ---
 CONF_TESLA_SWITCH_ENTITY = "tesla_switch_entity_id"
 CONF_TESLA_GRID_RELEASE_THRESHOLD = "tesla_grid_release_threshold_w"
+# Free-text display name for this car - shown in its entity names (e.g.
+# "<name> Ladesteuerung") and wherever the cheap-grid-charging feature
+# refers to it by name. "Tesla" keeps every existing default entity
+# name/slug unchanged for installations that don't set this.
+CONF_TESLA_CAR_NAME = "tesla_car_name"
 
 DEFAULT_TESLA_GRID_RELEASE_THRESHOLD = 1400
 MIN_TESLA_GRID_RELEASE_THRESHOLD = 0
 MAX_TESLA_GRID_RELEASE_THRESHOLD = 20000
+DEFAULT_TESLA_CAR_NAME = "Tesla"
 
 # --- Cheap-grid charging feature (skip PV, force-charge from the grid on
 # days with a poor solar forecast, during the cheap price window) ---
@@ -86,10 +98,15 @@ MAX_CHEAP_POWERWALL_CHARGE_THRESHOLD = 15000
 
 # Which car keeps charging when the Powerwall itself is charging and only
 # one may run - a live-adjustable select entity (see select.py), not part
-# of the config flow: the default below is the only "setup-time" choice.
-CHEAP_PRIORITY_AUTO_FIRST = "Auto Ladelimit zuerst"
-CHEAP_PRIORITY_TESLA_FIRST = "Tesla zuerst"
-DEFAULT_CHEAP_CAR_PRIORITY = CHEAP_PRIORITY_AUTO_FIRST
+# of the config flow. The actual option labels are built per config entry
+# from each car's (possibly customized, see CONF_ZOE_CAR_NAME/
+# CONF_TESLA_CAR_NAME above) display name - see
+# CheapGridChargingController.priority_option_zoe_first/_tesla_first in
+# cheap_controller.py. These two constants are what that computation
+# yields for installations that leave both cars at their default names -
+# kept here for tests/reference, not read by the controller itself.
+CHEAP_PRIORITY_AUTO_FIRST = f"{DEFAULT_ZOE_CAR_NAME} Ladelimit zuerst"
+CHEAP_PRIORITY_TESLA_FIRST = f"{DEFAULT_TESLA_CAR_NAME} zuerst"
 
 # Fixed daily time (local) at which "is tomorrow a low-solar day" gets
 # latched from the forecast sensor's current reading. Needs to be well

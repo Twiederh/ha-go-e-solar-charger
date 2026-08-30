@@ -28,12 +28,12 @@ async def async_setup_entry(
 
 class ZoeLimitEnableSwitch(SwitchEntity, RestoreEntity):
     _attr_has_entity_name = True
-    _attr_name = "Auto Ladelimit aktiviert"
     _attr_icon = "mdi:power"
 
     def __init__(self, controller: ZoeChargeLimitController, entry: ConfigEntry) -> None:
         self._controller = controller
         self._attr_unique_id = f"{entry.entry_id}_zoe_enabled"
+        self._attr_name = f"{controller.car_label} aktiviert"
         self._attr_is_on = True
         self._attr_device_info = device_info(entry)
 
@@ -58,12 +58,12 @@ class ZoeLimitEnableSwitch(SwitchEntity, RestoreEntity):
 
 class TeslaEnableSwitch(SwitchEntity, RestoreEntity):
     _attr_has_entity_name = True
-    _attr_name = "Tesla Ladesteuerung aktiviert"
     _attr_icon = "mdi:power"
 
     def __init__(self, controller: TeslaChargingController, entry: ConfigEntry) -> None:
         self._controller = controller
         self._attr_unique_id = f"{entry.entry_id}_tesla_enabled"
+        self._attr_name = f"{controller.car_name} Ladesteuerung aktiviert"
         self._attr_is_on = True
         self._attr_device_info = device_info(entry)
 

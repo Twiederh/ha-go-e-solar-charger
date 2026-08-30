@@ -28,13 +28,13 @@ async def async_setup_entry(
 
 class ZoeStatusSensor(SensorEntity):
     _attr_has_entity_name = True
-    _attr_name = "Auto Ladelimit Status"
     _attr_icon = "mdi:ev-station"
     _attr_should_poll = False
 
     def __init__(self, controller: ZoeChargeLimitController, entry: ConfigEntry) -> None:
         self._controller = controller
         self._attr_unique_id = f"{entry.entry_id}_zoe_status"
+        self._attr_name = f"{controller.car_label} Status"
         self._attr_device_info = device_info(entry)
 
     @property
@@ -78,13 +78,13 @@ class CheapStatusSensor(SensorEntity):
 
 class TeslaStatusSensor(SensorEntity):
     _attr_has_entity_name = True
-    _attr_name = "Tesla Ladesteuerung Status"
     _attr_icon = "mdi:car-electric"
     _attr_should_poll = False
 
     def __init__(self, controller: TeslaChargingController, entry: ConfigEntry) -> None:
         self._controller = controller
         self._attr_unique_id = f"{entry.entry_id}_tesla_status"
+        self._attr_name = f"{controller.car_name} Ladesteuerung Status"
         self._attr_device_info = device_info(entry)
 
     @property

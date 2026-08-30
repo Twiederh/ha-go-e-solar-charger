@@ -54,6 +54,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         entry,
         on_frc_changed=zoe_controller.async_evaluate,
         tesla_controller=tesla_controller,
+        zoe_controller=zoe_controller,
     )
     pv_controller.set_suppressor(cheap_controller)
     tesla_controller.set_suppressor(cheap_controller)

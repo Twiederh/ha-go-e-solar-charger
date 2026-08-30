@@ -86,12 +86,12 @@ class TeslaTestNowButton(ButtonEntity):
     change."""
 
     _attr_has_entity_name = True
-    _attr_name = "Tesla Jetzt pruefen"
     _attr_icon = "mdi:refresh"
 
     def __init__(self, controller: TeslaChargingController, entry: ConfigEntry) -> None:
         self._controller = controller
         self._attr_unique_id = f"{entry.entry_id}_tesla_test_now"
+        self._attr_name = f"{controller.car_name} Jetzt pruefen"
         self._attr_device_info = device_info(entry)
 
     async def async_press(self) -> None:

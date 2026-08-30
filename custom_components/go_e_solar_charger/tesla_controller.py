@@ -17,8 +17,10 @@ from homeassistant.helpers.event import async_track_state_change_event
 from .const import (
     CONF_PV_GRID_ENTITY,
     CONF_PV_SOC_ENTITY,
+    CONF_TESLA_CAR_NAME,
     CONF_TESLA_GRID_RELEASE_THRESHOLD,
     CONF_TESLA_SWITCH_ENTITY,
+    DEFAULT_TESLA_CAR_NAME,
     DEFAULT_TESLA_GRID_RELEASE_THRESHOLD,
     SIGNAL_TESLA_STATUS_UPDATE,
 )
@@ -47,6 +49,9 @@ class TeslaChargingController:
         self._soc_entity = config.get(CONF_PV_SOC_ENTITY)
         self._grid_entity = config.get(CONF_PV_GRID_ENTITY)
         self._configured = bool(self._switch_entity and self._soc_entity)
+        # Free-text name for this car - used in its own entity names and
+        # wherever the cheap-grid-charging feature refers to it by name.
+        self.car_name: str = config.get(CONF_TESLA_CAR_NAME) or DEFAULT_TESLA_CAR_NAME
 
         # Set from restored entity state right after platform setup, before
         # async_setup() runs its first evaluation - see __init__.py.

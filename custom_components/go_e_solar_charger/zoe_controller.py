@@ -13,11 +13,13 @@ from .const import (
     CONF_GOE_HOST,
     CONF_ZOE_CAR_CONNECTED_ENTITY,
     CONF_ZOE_CAR_CONNECTED_ON_STATE,
+    CONF_ZOE_CAR_NAME,
     CONF_ZOE_CHARGING_ENTITY,
     CONF_ZOE_CHARGING_ON_STATE,
     CONF_ZOE_DEFAULT_LIMIT,
     CONF_ZOE_SOC_ENTITY,
     DEFAULT_ZOE_CAR_CONNECTED_ON_STATE,
+    DEFAULT_ZOE_CAR_NAME,
     DEFAULT_ZOE_CHARGING_ON_STATE,
     DEFAULT_ZOE_LIMIT,
     SIGNAL_ZOE_STATUS_UPDATE,
@@ -47,6 +49,9 @@ class ZoeChargeLimitController:
         self._car_connected_on_state = config.get(
             CONF_ZOE_CAR_CONNECTED_ON_STATE, DEFAULT_ZOE_CAR_CONNECTED_ON_STATE
         )
+        # Free-text name for this car - used in its own entity names and
+        # wherever the cheap-grid-charging feature refers to it by name.
+        self.car_name: str = config.get(CONF_ZOE_CAR_NAME) or DEFAULT_ZOE_CAR_NAME
         self._goe = GoEClient(
             async_get_clientsession(hass),
             config[CONF_GOE_HOST],
@@ -65,6 +70,14 @@ class ZoeChargeLimitController:
     @property
     def signal(self) -> str:
         return f"{SIGNAL_ZOE_STATUS_UPDATE}_{self.entry.entry_id}"
+
+    @property
+    def car_label(self) -> str:
+        """Display label used for this car's own entity names and by the
+        cheap-grid-charging feature when referring to it - e.g. "Zoe
+        Ladelimit" if the car was named "Zoe", or "Auto Ladelimit" with the
+        default name."""
+        return f"{self.car_name} Ladelimit"
 
     async def async_setup(self) -> None:
         entities = [self._soc_entity, self._charging_entity]

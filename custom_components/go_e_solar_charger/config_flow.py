@@ -18,10 +18,12 @@ from .const import (
     CONF_PV_GRID_ENTITY,
     CONF_PV_SOC_ENTITY,
     CONF_PV_SOLAR_ENTITY,
+    CONF_TESLA_CAR_NAME,
     CONF_TESLA_GRID_RELEASE_THRESHOLD,
     CONF_TESLA_SWITCH_ENTITY,
     CONF_ZOE_CAR_CONNECTED_ENTITY,
     CONF_ZOE_CAR_CONNECTED_ON_STATE,
+    CONF_ZOE_CAR_NAME,
     CONF_ZOE_CHARGING_ENTITY,
     CONF_ZOE_CHARGING_ON_STATE,
     CONF_ZOE_DEFAULT_LIMIT,
@@ -31,8 +33,10 @@ from .const import (
     DEFAULT_CHEAP_PRICE_THRESHOLD,
     DEFAULT_PV_EXPORT_OVERRIDE_THRESHOLD,
     DEFAULT_PV_THRESHOLD,
+    DEFAULT_TESLA_CAR_NAME,
     DEFAULT_TESLA_GRID_RELEASE_THRESHOLD,
     DEFAULT_ZOE_CAR_CONNECTED_ON_STATE,
+    DEFAULT_ZOE_CAR_NAME,
     DEFAULT_ZOE_CHARGING_ON_STATE,
     DEFAULT_ZOE_LIMIT,
     DOMAIN,
@@ -74,6 +78,10 @@ def _connection_schema(defaults: dict) -> vol.Schema:
 def _zoe_schema(defaults: dict) -> vol.Schema:
     return vol.Schema(
         {
+            vol.Optional(
+                CONF_ZOE_CAR_NAME,
+                default=defaults.get(CONF_ZOE_CAR_NAME, DEFAULT_ZOE_CAR_NAME),
+            ): str,
             vol.Required(
                 CONF_ZOE_SOC_ENTITY, default=defaults.get(CONF_ZOE_SOC_ENTITY, vol.UNDEFINED)
             ): selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
@@ -224,6 +232,10 @@ def _cheap_schema(defaults: dict) -> vol.Schema:
 def _tesla_schema(defaults: dict) -> vol.Schema:
     return vol.Schema(
         {
+            vol.Optional(
+                CONF_TESLA_CAR_NAME,
+                default=defaults.get(CONF_TESLA_CAR_NAME, DEFAULT_TESLA_CAR_NAME),
+            ): str,
             vol.Required(
                 CONF_TESLA_SWITCH_ENTITY,
                 default=defaults.get(CONF_TESLA_SWITCH_ENTITY, vol.UNDEFINED),
@@ -252,6 +264,12 @@ def _normalize(data: dict) -> dict:
         data[CONF_ZOE_CAR_CONNECTED_ENTITY] = None
     if not data.get(CONF_GOE_API_KEY):
         data[CONF_GOE_API_KEY] = ""
+    # Free-text car names - blank (or whitespace-only) falls back to the
+    # default rather than storing an empty display name.
+    data[CONF_ZOE_CAR_NAME] = str(data.get(CONF_ZOE_CAR_NAME) or "").strip() or DEFAULT_ZOE_CAR_NAME
+    data[CONF_TESLA_CAR_NAME] = (
+        str(data.get(CONF_TESLA_CAR_NAME) or "").strip() or DEFAULT_TESLA_CAR_NAME
+    )
     if CONF_ZOE_DEFAULT_LIMIT in data:
         data[CONF_ZOE_DEFAULT_LIMIT] = int(data[CONF_ZOE_DEFAULT_LIMIT])
     if CONF_PV_DEFAULT_THRESHOLD in data:
