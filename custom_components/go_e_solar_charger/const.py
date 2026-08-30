@@ -105,7 +105,7 @@ MAX_CHEAP_POWERWALL_CHARGE_THRESHOLD = 15000
 # cheap_controller.py. These two constants are what that computation
 # yields for installations that leave both cars at their default names -
 # kept here for tests/reference, not read by the controller itself.
-CHEAP_PRIORITY_AUTO_FIRST = f"{DEFAULT_ZOE_CAR_NAME} Ladelimit zuerst"
+CHEAP_PRIORITY_AUTO_FIRST = f"{DEFAULT_ZOE_CAR_NAME} zuerst"
 CHEAP_PRIORITY_TESLA_FIRST = f"{DEFAULT_TESLA_CAR_NAME} zuerst"
 
 # Fixed daily time (local) at which "is tomorrow a low-solar day" gets

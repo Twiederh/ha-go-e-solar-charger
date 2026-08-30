@@ -975,8 +975,8 @@ async def test_custom_car_names_appear_everywhere(hass, enable_custom_integratio
         priority_entity = f"select.{DEVICE_SLUG}_guenstigstrom_ladeprioritaet"
         priority_state = hass.states.get(priority_entity)
         assert priority_state is not None
-        assert priority_state.attributes["options"] == ["Zoe Ladelimit zuerst", "Model 3 zuerst"]
-        assert priority_state.state == "Zoe Ladelimit zuerst"
+        assert priority_state.attributes["options"] == ["Zoe zuerst", "Model 3 zuerst"]
+        assert priority_state.state == "Zoe zuerst"
 
         # The cheap-grid-charging status text uses the custom names too.
         _fire_evening_eval(hass)

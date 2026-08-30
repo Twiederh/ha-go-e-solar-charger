@@ -168,10 +168,10 @@ sie sind.)
   (Standard 200 W), ebenso persistent.
 - `select.<name>_guenstigstrom_ladeprioritaet` - welches Fahrzeug
   weiterlaedt, wenn die Powerwall selbst laedt und nur eines der beiden
-  gleichzeitig darf ("Auto Ladelimit zuerst" [Standard] oder "Tesla
-  zuerst"), jederzeit im Dashboard umstellbar und wirkt sofort, auch
-  mitten im laufenden Guenstigfenster; bleibt nach einem Neustart
-  erhalten.
+  gleichzeitig darf ("Auto zuerst" [Standard] oder "Tesla zuerst" - bzw.
+  die frei vergebenen Namen der beiden Autos, siehe oben), jederzeit im
+  Dashboard umstellbar und wirkt sofort, auch mitten im laufenden
+  Guenstigfenster; bleibt nach einem Neustart erhalten.
 - `switch.<name>_guenstigstrom_aktiviert` - schaltet die Funktion an/aus.
   Beim Ausschalten waehrend eines aktiven Guenstigfensters wird die
   Kontrolle sofort an beide Fahrzeuge zurueckgegeben (go-e-Zwangsladen
@@ -295,7 +295,8 @@ Laedt die Powerwall dabei selbst mit Netzstrom (Ladeleistung ueber der
 bis zu ihrem eigenen Hardware-Limit von 13,5 kW), darf nur eines der
 beiden Fahrzeuge gleichzeitig laden, um die Powerwall nicht zusaetzlich zu
 belasten: welches, entscheidet die "Guenstigstrom Ladepriorisierung"
-(Standard: Auto Ladelimit zuerst, dann Tesla). Beginnt die Powerwall
+(Standard: Auto zuerst, dann Tesla - bzw. die frei vergebenen Namen der
+beiden Autos). Beginnt die Powerwall
 mitten im Guenstigfenster selbst zu laden, waehrend beide Fahrzeuge
 laden, wird das nicht-priorisierte sofort pausiert (`frc=Off` bzw. Tesla-
 Schalter aus); stoppt die Powerwall ihr eigenes Laden wieder, laden beide

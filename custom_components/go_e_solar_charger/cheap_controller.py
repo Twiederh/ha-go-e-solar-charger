@@ -114,22 +114,30 @@ class CheapGridChargingController:
         self.powerwall_charge_threshold: float = config.get(
             CONF_CHEAP_POWERWALL_CHARGE_THRESHOLD, DEFAULT_CHEAP_POWERWALL_CHARGE_THRESHOLD
         )
-        # Priority option labels, built from each car's (possibly
-        # customized) display name - e.g. "Zoe Ladelimit zuerst" if the
-        # go-e car was named "Zoe". Falls back to the default names if the
-        # respective controller wasn't passed in (shouldn't happen outside
-        # tests exercising this controller in isolation).
+        # Display label for this car's own entities/status text - e.g.
+        # "Zoe Ladelimit" if the go-e car was named "Zoe". Falls back to
+        # the default name if the controller wasn't passed in (shouldn't
+        # happen outside tests exercising this controller in isolation).
         self.zoe_car_label: str = (
             self._zoe_controller.car_label
             if self._zoe_controller is not None
             else f"{DEFAULT_ZOE_CAR_NAME} Ladelimit"
+        )
+        self.zoe_car_name: str = (
+            self._zoe_controller.car_name
+            if self._zoe_controller is not None
+            else DEFAULT_ZOE_CAR_NAME
         )
         self.tesla_car_label: str = (
             self._tesla_controller.car_name
             if self._tesla_controller is not None
             else DEFAULT_TESLA_CAR_NAME
         )
-        self.priority_option_zoe_first: str = f"{self.zoe_car_label} zuerst"
+        # Priority option labels use the plain car name (not the
+        # "<name> Ladelimit" entity-label form) - "Zoe zuerst" reads better
+        # than "Zoe Ladelimit zuerst" once the car has an actual name
+        # rather than the generic default "Auto".
+        self.priority_option_zoe_first: str = f"{self.zoe_car_name} zuerst"
         self.priority_option_tesla_first: str = f"{self.tesla_car_label} zuerst"
         # Live-adjustable via select.py, not part of the config flow.
         self.car_priority: str = self.priority_option_zoe_first
