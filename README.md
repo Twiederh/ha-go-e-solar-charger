@@ -274,6 +274,16 @@ Zwei unabhaengige taegliche Rhythmen steuern dieses Feature:
    mit Mitternacht zusammen - genau der Moment, in dem die am Vorabend
    gelatchte Entscheidung zur "heutigen" Entscheidung wird.
 
+Bei der Installation, einem Update bzw. jedem Neustart von Home Assistant
+geht diese zwischengespeicherte Entscheidung verloren (sie wird nirgends
+dauerhaft abgelegt). Damit nicht bis zur naechsten 20:30-Auswertung
+gewartet werden muss, wird die Solar-Vorhersage direkt beim Start einmal
+sofort abgerufen und sowohl als "morgen"- als auch als "heute"-Entscheidung
+uebernommen - so greift die Erkennung eines Guenstigstrom-Tags (und die
+damit verbundene Stilllegung, siehe unten) sofort, statt erst am naechsten
+Tag. Der "Guenstigstrom Jetzt testen"-Button macht genau dasselbe, jederzeit
+manuell auf Wunsch.
+
 Ist "heute" laut dieser Entscheidung ein Guenstigstrom-Tag, passiert
 Folgendes fuer den **ganzen Tag**: der go-e-eigene
 PV-Ueberschussladen-Schalter wird ausgeschaltet, die eigene
@@ -329,11 +339,15 @@ freigeben ab Einspeisung"-Schwelle (Standard 1400 W) ins Netz ein, dann
 wird trotzdem freigegeben. Erreicht die Powerwall selbst die Schwelle,
 bleibt der Schalter dauerhaft an, unabhaengig von der Einspeisung.
 
-Der Schalter wird nur bei einer tatsaechlichen Aenderung der Entscheidung
-umgeschaltet, nicht bei jeder Sensor-Aktualisierung erneut - der Tesla hat
-kein go-e-aehnliches Watchdog-Verhalten, das ein staendiges Neusenden
-braucht. Die reine Entscheidungslogik steckt in `tesla_logic.py`, frei von
-Home-Assistant-Importen.
+Der Schalter wird bei jeder tatsaechlichen Aenderung der Entscheidung sofort
+umgeschaltet - und zusaetzlich alle paar Minuten erneut gesetzt, auch wenn
+sich an der Entscheidung selbst nichts geaendert hat. Grund: der Tesla kann
+das Laden trotz ausgeschaltetem Schalter von sich aus wieder aufnehmen (z. B.
+ueber sein eigenes Zeitplan-/Smart-Charging) - ein einmaliges Ausschalten
+reicht dafuer nicht aus. Die Wiederholung ist auf `REASSERT_INTERVAL_SECONDS`
+(Standard 240 s) gedrosselt, damit sie nicht bei jeder einzelnen
+Sensor-Aktualisierung erneut feuert. Die reine Entscheidungslogik steckt in
+`tesla_logic.py`, frei von Home-Assistant-Importen.
 
 An einem Guenstigstrom-Tag (siehe oben) wird diese eigene PV-/Einspeise-
 Logik fuer den ganzen Tag stillgelegt - der Schalter wird dann

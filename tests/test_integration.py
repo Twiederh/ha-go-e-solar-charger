@@ -380,12 +380,29 @@ async def test_cheap_daily_cycle_and_pv_suppression(hass, enable_custom_integrat
         assert hass.states.get(f"sensor.{DEVICE_SLUG}_guenstigstrom_status") is not None
         assert hass.states.get(f"button.{DEVICE_SLUG}_guenstigstrom_jetzt_testen") is not None
 
-        # Evening: latch tomorrow's decision. Not applied to "today" yet.
+        # A forecast for "tomorrow" was already available before setup even
+        # ran (the normal case after a restart/reload, or simply because
+        # the forecast sensor already had data at install time) - today's
+        # low-solar decision, and the suppression that goes with it, must
+        # already be in effect right away rather than waiting for the
+        # scheduled evening evaluation.
+        assert mock_set_switch.call_args.args == (False,)
+        assert "wartet auf Guenstigfenster" in _state(
+            hass, f"sensor.{DEVICE_SLUG}_guenstigstrom_status"
+        )
+
+        # Evening: re-latches tomorrow's decision from the (unchanged)
+        # forecast - today's was already latched at setup, so nothing
+        # changes yet.
         _fire_evening_eval(hass)
         await hass.async_block_till_done()
-        assert "Normaler Tag" in _state(hass, f"sensor.{DEVICE_SLUG}_guenstigstrom_status")
+        assert "wartet auf Guenstigfenster" in _state(
+            hass, f"sensor.{DEVICE_SLUG}_guenstigstrom_status"
+        )
 
-        # Midnight: price drops -> daily rollover + forced charge starts.
+        # Midnight: price drops -> forced charge starts (the switch/
+        # suppression were already applied at setup, so no new switch call
+        # happens here, only the forced charge).
         hass.states.async_set(CHEAP_PRICE_ENTITY, CHEAP_PRICE_CHEAP)
         await hass.async_block_till_done()
 
@@ -670,6 +687,66 @@ async def test_tesla_charging_follows_powerwall_soc_and_grid_export(
 
 
 @pytest.mark.asyncio
+async def test_tesla_reasserts_stop_periodically(hass, enable_custom_integrations):
+    """The Tesla's own charging logic can decide on its own to resume
+    charging while plugged in (observed in practice: it kept restarting
+    for hours while the SoC-gate decision stayed "gestoppt" the whole
+    time) - so a one-shot switch.turn_off isn't enough. As long as the
+    decision hasn't changed, the switch call must still be repeated once
+    REASSERT_INTERVAL_SECONDS has passed, but not on every single
+    evaluation in between (that would spam the Tesla API)."""
+    hass.states.async_set(ZOE_SOC_ENTITY, "50")
+    hass.states.async_set(ZOE_CHARGING_ENTITY, "off")
+    hass.states.async_set(ZOE_CONNECTED_ENTITY, "off")
+
+    hass.states.async_set(PV_SOC_ENTITY, "30")  # below the 50 % threshold
+    hass.states.async_set(PV_SOLAR_ENTITY, "0")
+    hass.states.async_set(PV_GRID_ENTITY, "-200")  # exporting, but below the 1400 W release
+    hass.states.async_set(PV_BATTERY_ENTITY, "0")
+
+    fake_now = [1000.0]
+
+    with patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.stop_charging",
+        new=AsyncMock(),
+    ), patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.release",
+        new=AsyncMock(),
+    ), patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.push_pv_values",
+        new=AsyncMock(),
+    ), patch(
+        "custom_components.go_e_solar_charger.tesla_controller.TeslaChargingController._set_tesla_switch",
+        new=AsyncMock(),
+    ) as mock_set_tesla, patch(
+        "custom_components.go_e_solar_charger.tesla_controller.time.monotonic",
+        new=lambda: fake_now[0],
+    ):
+        entry = await _make_entry(hass)
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+        assert mock_set_tesla.call_args.args == (False,)
+        calls_after_setup = mock_set_tesla.call_count
+
+        # A little later, still stopped - the decision hasn't changed and
+        # the reassert interval hasn't elapsed yet, so no new call.
+        fake_now[0] += 30
+        hass.states.async_set(PV_GRID_ENTITY, "-210")
+        await hass.async_block_till_done()
+        assert mock_set_tesla.call_count == calls_after_setup
+
+        # Past the reassert interval, still stopped - must re-apply "off"
+        # again even though nothing about the decision itself changed, to
+        # override the Tesla resuming charging on its own.
+        fake_now[0] += 300
+        hass.states.async_set(PV_GRID_ENTITY, "-220")
+        await hass.async_block_till_done()
+        assert mock_set_tesla.call_args.args == (False,)
+        assert mock_set_tesla.call_count == calls_after_setup + 1
+
+
+@pytest.mark.asyncio
 async def test_tesla_not_configured_is_inert(hass, enable_custom_integrations):
     """An entry created before this feature existed (or one where it was
     deliberately left blank) won't have tesla_switch_entity_id - setup
@@ -745,9 +822,12 @@ async def test_cheap_window_forces_both_cars_and_suppresses_tesla_own_logic(
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
 
-        # Before the window: Tesla's own logic runs normally (stopped,
-        # below its own SoC threshold with no export).
-        assert mock_set_tesla.call_args.args == (False,)
+        # A poor forecast was already available before setup - today's
+        # low-solar decision is already latched right away, so Tesla's own
+        # PV/export-based gating is suppressed from the start instead of
+        # running normally until the price window opens.
+        assert mock_set_tesla.call_args is None
+        assert "Pausiert" in _state(hass, f"sensor.{DEVICE_SLUG}_tesla_ladesteuerung_status")
 
         _fire_evening_eval(hass)
         await hass.async_block_till_done()

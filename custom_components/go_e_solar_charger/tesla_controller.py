@@ -1,11 +1,20 @@
 """Glue between Home Assistant state and the pure logic in tesla_logic.py.
 
-Unlike the PV-surplus push (which must resend on every tick to satisfy
-go-e's watchdog, see pv_controller.py), the Tesla's own charging solution
-has no such requirement - so this only calls switch.turn_on/turn_off when
-the decision actually changes, rather than spamming the switch.
+Turning switch.turn_on/turn_off once when the decision changes isn't
+enough on its own: the Tesla's own (solar-aware) charging logic can decide
+on its own to resume charging while it's plugged in - e.g. its own
+scheduled/smart charging - regardless of what our switch last told it.
+Observed in practice: the SoC-gate decision stayed "gestoppt" for hours
+straight while the Powerwall charged from 59 % to 84 %, yet the car kept
+(re)starting its own charging in that time. So on top of applying the
+decision immediately when it changes, this also re-asserts the current
+decision periodically (throttled to REASSERT_INTERVAL_SECONDS) as new
+evaluations come in - similar in spirit to the PV-surplus push's
+keepalive (see pv_controller.py), just enforcing a state instead of
+resending values.
 """
 import logging
+import time
 from typing import Optional
 
 from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
@@ -31,6 +40,14 @@ _LOGGER = logging.getLogger(__name__)
 NOT_CONFIGURED_TEXT = (
     'Nicht konfiguriert - bitte unter "Konfigurieren" den Tesla-Lade-Schalter angeben.'
 )
+
+# How often the current stop/go decision is re-applied even while it
+# hasn't changed, to override the Tesla's own charging logic if it tries
+# to resume on its own. Comfortably under the ~5-minute update cadence the
+# Powerwall SoC/grid sensors are typically seen at, so a real restart gets
+# caught within one evaluation cycle - but not so tight that it would spam
+# the Tesla API if those sensors happened to update much faster.
+REASSERT_INTERVAL_SECONDS = 240
 
 
 class TeslaChargingController:
@@ -64,6 +81,10 @@ class TeslaChargingController:
         # ensures the switch is driven into a defined state at startup
         # regardless of whatever it happened to be left at.
         self._last_applied: Optional[bool] = None
+        # monotonic() timestamp of the last time we actually called the
+        # switch service - used to throttle the periodic re-assertion
+        # described above (None = never applied yet, always due).
+        self._last_applied_at: Optional[float] = None
         self._suppressed_by = None
 
         self._unsub_track = None
@@ -152,9 +173,16 @@ class TeslaChargingController:
             )
         )
 
-        if result.should_charge is not None and result.should_charge != self._last_applied:
-            await self._set_tesla_switch(result.should_charge)
-            self._last_applied = result.should_charge
+        if result.should_charge is not None:
+            changed = result.should_charge != self._last_applied
+            due = (
+                self._last_applied_at is None
+                or (time.monotonic() - self._last_applied_at) >= REASSERT_INTERVAL_SECONDS
+            )
+            if changed or due:
+                await self._set_tesla_switch(result.should_charge)
+                self._last_applied = result.should_charge
+                self._last_applied_at = time.monotonic()
 
         self.status_text = result.status_text
         async_dispatcher_send(self.hass, self.signal)
@@ -176,6 +204,7 @@ class TeslaChargingController:
             # own charging solution/limit would otherwise decide.
             await self._set_tesla_switch(True)
             self._last_applied = True
+            self._last_applied_at = time.monotonic()
 
         self.enabled = value
         await self.async_evaluate()
@@ -194,6 +223,7 @@ class TeslaChargingController:
         if on != self._last_applied:
             await self._set_tesla_switch(on)
             self._last_applied = on
+            self._last_applied_at = time.monotonic()
         self.status_text = (
             "Erzwungen (Guenstigstrom-Fenster aktiv)"
             if on

@@ -201,6 +201,16 @@ class CheapGridChargingController:
         # "unknown".
         self._was_cheap = is_cheap_now(self._read_price_input())
         self._powerwall_was_charging = self._read_powerwall_charging()
+
+        # None of _next_day_*/_today_* survives a restart (fresh install,
+        # an update, or just Home Assistant restarting) - without this,
+        # the integration would show "noch keine Vorhersage fuer heute
+        # uebernommen" and do nothing on a genuine low-solar day until the
+        # next scheduled evening evaluation, which could be most of a day
+        # away. So sample the forecast right now and apply it immediately,
+        # exactly like the manual-test button does.
+        self._resample_forecast_now()
+        await self._async_resync()
         self._refresh_status()
 
     def async_unload(self) -> None:
@@ -268,6 +278,21 @@ class CheapGridChargingController:
         )
 
     # --- event handlers ----------------------------------------------------
+
+    def _resample_forecast_now(self) -> None:
+        """Reads the forecast entity's current value and latches it as
+        both tomorrow's *and* today's decision. Used at startup (nothing
+        about _next_day_*/_today_* survives a restart/reload - see
+        async_setup) and by the manual-test button. NOT used by the daily
+        evening evaluation below, which must only ever touch tomorrow's
+        decision and leave today's alone."""
+        forecast_kwh = self._read_float(self._forecast_entity)
+        decision = is_low_solar_day(ForecastDecisionInput(forecast_kwh, self.forecast_threshold))
+        if decision is not None:
+            self._next_day_low_solar = decision
+            self._next_day_forecast_kwh = forecast_kwh
+            self._today_low_solar = decision
+            self._today_forecast_kwh = forecast_kwh
 
     @callback
     def _handle_evening_eval(self, now) -> None:
@@ -415,9 +440,9 @@ class CheapGridChargingController:
     async def _async_resync(self) -> None:
         """Applies whatever should currently be true given today's already-
         latched decision and the live price/car/Powerwall state, as if a
-        window edge just happened - used when (re-)enabling or on a manual
-        test, not on every price tick (that would fight the SoC-limit
-        stop)."""
+        window edge just happened - used at startup, when (re-)enabling,
+        or on a manual test, not on every price tick (that would fight the
+        SoC-limit stop)."""
         now_cheap = is_cheap_now(self._read_price_input())
         rollover_action = decide_daily_rollover(
             DailyRolloverInput(was_suppressing=self._suppressing, low_solar_today=self._today_low_solar)
@@ -503,12 +528,6 @@ class CheapGridChargingController:
         the schedule."""
         if not self._configured:
             return
-        forecast_kwh = self._read_float(self._forecast_entity)
-        decision = is_low_solar_day(ForecastDecisionInput(forecast_kwh, self.forecast_threshold))
-        if decision is not None:
-            self._next_day_low_solar = decision
-            self._next_day_forecast_kwh = forecast_kwh
-            self._today_low_solar = decision
-            self._today_forecast_kwh = forecast_kwh
+        self._resample_forecast_now()
         await self._async_resync()
         self._refresh_status()
