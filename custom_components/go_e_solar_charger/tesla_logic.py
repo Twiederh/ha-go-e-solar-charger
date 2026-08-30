@@ -13,6 +13,20 @@ Powerwall's own state.
 from dataclasses import dataclass
 from typing import Optional
 
+# The grid-power reading is noisy even while nothing meaningful is
+# happening (a few Watts of jitter around zero net export). Rounding it to
+# this granularity before it goes into the status text keeps that text -
+# and therefore the sensor's logged state - stable while the underlying
+# decision hasn't changed, instead of rewriting (and re-logging) it on
+# every single evaluation. The actual gating decision below still compares
+# against the *unrounded* value, so this only affects what's displayed.
+_DISPLAY_ROUNDING_W = 100
+
+
+def _rounded_w(value: float) -> float:
+    rounded = round(value / _DISPLAY_ROUNDING_W) * _DISPLAY_ROUNDING_W
+    return 0.0 if rounded == 0 else rounded
+
 
 @dataclass
 class TeslaChargeInput:
@@ -49,13 +63,13 @@ def evaluate(state: TeslaChargeInput) -> TeslaChargeResult:
     export_w = None if state.grid_w is None else -state.grid_w
     if export_w is not None and export_w >= state.grid_release_threshold_w:
         return TeslaChargeResult(
-            f"Laden freigegeben (Einspeisung {export_w:.0f} W >= "
+            f"Laden freigegeben (Einspeisung {_rounded_w(export_w):.0f} W >= "
             f"{state.grid_release_threshold_w:.0f} W trotz Akkustand "
             f"{state.powerwall_soc:.0f} % < {state.soc_threshold:.0f} %)",
             True,
         )
 
-    export_text = "unbekannt" if export_w is None else f"{export_w:.0f} W"
+    export_text = "unbekannt" if export_w is None else f"{_rounded_w(export_w):.0f} W"
     return TeslaChargeResult(
         f"Laden gestoppt (Akkustand {state.powerwall_soc:.0f} % < "
         f"{state.soc_threshold:.0f} %, Einspeisung {export_text} < "

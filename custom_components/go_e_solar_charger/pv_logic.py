@@ -18,6 +18,19 @@ than wasting the surplus.
 from dataclasses import dataclass
 from typing import Optional
 
+# See tesla_logic.py's identical constant/helper for the rationale: this
+# only smooths the *displayed* export value so the status text (and thus
+# the sensor's logged state) doesn't get rewritten on every evaluation
+# purely from grid-meter noise - the override decision itself still
+# compares against the unrounded value.
+_DISPLAY_ROUNDING_W = 100
+
+
+def _rounded_w(value: float) -> float:
+    rounded = round(value / _DISPLAY_ROUNDING_W) * _DISPLAY_ROUNDING_W
+    return 0.0 if rounded == 0 else rounded
+
+
 PPV_KEY = "pPv"
 PGRID_KEY = "pGrid"
 PAKKU_KEY = "pAkku"
@@ -68,7 +81,7 @@ def evaluate(state: PvPushInput) -> PvPushResult:
 
     if export_override:
         return PvPushResult(
-            f"Einspeisung {export_w:.0f} W > {state.export_override_w:.0f} W trotz "
+            f"Einspeisung {_rounded_w(export_w):.0f} W > {state.export_override_w:.0f} W trotz "
             f"Akkustand {state.powerwall_soc:.0f} % < {state.threshold:.0f} % "
             "- PV-Werte trotzdem gesendet",
             {PPV_KEY: state.solar_w, PGRID_KEY: state.grid_w, PAKKU_KEY: state.battery_w},
