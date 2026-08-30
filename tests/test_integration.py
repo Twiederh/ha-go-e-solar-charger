@@ -195,6 +195,21 @@ async def test_pv_surplus_push_flow(hass, enable_custom_integrations):
         assert mock_push.call_args.args[0] == {"pPv": 0, "pGrid": 0, "pAkku": 0}
         assert "keine PV-Freigabe" in _state(hass, f"sensor.{DEVICE_SLUG}_pv_freigabe_status")
 
+        # the sensor's attributes must show both what was actually read
+        # from the source sensors (the real 3000/-200/-500/30) and what
+        # was actually sent (the safety zeros) - so a mismatch between
+        # "what go-e should be getting" and "what it's really getting" can
+        # be checked directly in the UI instead of just trusting the
+        # status text.
+        attrs = hass.states.get(f"sensor.{DEVICE_SLUG}_pv_freigabe_status").attributes
+        assert attrs["gelesen_solar_w"] == 3000.0
+        assert attrs["gelesen_netz_w"] == -200.0
+        assert attrs["gelesen_akku_w"] == -500.0
+        assert attrs["gelesen_powerwall_soc"] == 30.0
+        assert attrs["gesendet_pPv"] == 0
+        assert attrs["gesendet_pGrid"] == 0
+        assert attrs["gesendet_pAkku"] == 0
+
         # cross the threshold -> real values pushed
         hass.states.async_set(PV_SOC_ENTITY, "70")
         await hass.async_block_till_done()
@@ -207,6 +222,12 @@ async def test_pv_surplus_push_flow(hass, enable_custom_integrations):
         await hass.async_block_till_done()
         assert mock_push.call_args.args[0] == {"pPv": 3000.0, "pGrid": -200.0, "pAkku": -500.0}
         assert "PV-Werte gesendet" in _state(hass, f"sensor.{DEVICE_SLUG}_pv_freigabe_status")
+
+        attrs = hass.states.get(f"sensor.{DEVICE_SLUG}_pv_freigabe_status").attributes
+        assert attrs["gesendet_pPv"] == 3000.0
+        assert attrs["gesendet_pGrid"] == -200.0
+        assert attrs["gesendet_pAkku"] == -500.0
+        assert attrs["letzte_uebertragung"] is not None
 
         # lower the threshold above the current SoC again via the number
         # entity -> back to zeros

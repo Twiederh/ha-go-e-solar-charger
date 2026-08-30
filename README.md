@@ -151,7 +151,16 @@ sie sind.)
   (Akkustand 62 % >= 50 %)", "Akkustand 40 % < 50 % - keine PV-Freigabe an
   go-e", "Einspeisung 3500 W > 3100 W trotz Akkustand 30 % < 50 % -
   PV-Werte trotzdem gesendet", "Leistungswerte der Powerwall nicht
-  verfuegbar", ...).
+  verfuegbar", ...). Zum Nachpruefen, ob die richtigen Werte an den go-e
+  gehen, hat dieser Sensor zusaetzliche Attribute (in Home Assistant per
+  Klick auf die Entity bzw. unter Entwicklerwerkzeuge -> Zustaende
+  sichtbar): `gelesen_solar_w` / `gelesen_netz_w` / `gelesen_akku_w` /
+  `gelesen_powerwall_soc` zeigen die zuletzt von den konfigurierten
+  Powerwall-Sensoren gelesenen Rohwerte, `gesendet_pPv` / `gesendet_pGrid`
+  / `gesendet_pAkku` das tatsaechlich zuletzt an go-e geschickte
+  "ids"-Paket (0/0/0, wenn unterhalb der Schwelle sicherheitshalber
+  Nullen gesendet wurden) und `letzte_uebertragung` den Zeitpunkt der
+  letzten erfolgreichen Uebertragung.
 - `button.<name>_pv_jetzt_senden` - schickt die aktuell berechneten Werte
   sofort, praktisch zum Testen der go-e-Verbindung, ohne auf die naechste
   Sensor-Aenderung oder den Keep-Alive-Tick zu warten.

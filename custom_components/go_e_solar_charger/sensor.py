@@ -116,6 +116,27 @@ class PvStatusSensor(SensorEntity):
     def native_value(self) -> str:
         return self._controller.status_text
 
+    @property
+    def extra_state_attributes(self) -> dict:
+        # Lets you check exactly what this integration read from the
+        # Powerwall sensors and what it actually sent to go-e (the "ids"
+        # payload), without having to trust the status text or dig through
+        # the logs - see PvSurplusController.async_evaluate().
+        read = self._controller.last_read_values
+        sent = self._controller.last_pushed_values
+        attrs = {
+            "gelesen_solar_w": read.get("solar_w"),
+            "gelesen_netz_w": read.get("grid_w"),
+            "gelesen_akku_w": read.get("battery_w"),
+            "gelesen_powerwall_soc": read.get("powerwall_soc"),
+            "gesendet_pPv": sent.get("pPv") if sent else None,
+            "gesendet_pGrid": sent.get("pGrid") if sent else None,
+            "gesendet_pAkku": sent.get("pAkku") if sent else None,
+        }
+        if self._controller.last_pushed_at is not None:
+            attrs["letzte_uebertragung"] = self._controller.last_pushed_at.isoformat()
+        return attrs
+
     async def async_added_to_hass(self) -> None:
         self.async_on_remove(
             async_dispatcher_connect(self.hass, self._controller.signal, self._handle_update)

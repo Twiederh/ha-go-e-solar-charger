@@ -1,6 +1,7 @@
 """Glue between Home Assistant state and the pure logic in pv_logic.py."""
 import logging
 from datetime import timedelta
+from typing import Optional
 
 from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import Event, HomeAssistant, callback
@@ -11,6 +12,7 @@ from homeassistant.helpers.event import (
     async_track_state_change_event,
     async_track_time_interval,
 )
+from homeassistant.util import dt as dt_util
 
 from .const import (
     CONF_GOE_API_KEY,
@@ -58,6 +60,14 @@ class PvSurplusController:
         )
         self.enabled: bool = True
         self.status_text: str = "Initialisiere ..."
+
+        # Exposed as sensor attributes (see sensor.py) so the actual
+        # go-e payload and the raw readings behind it can be checked
+        # directly in the UI, without having to trust the status text or
+        # go digging through the logs.
+        self.last_read_values: dict = {}
+        self.last_pushed_values: Optional[dict] = None
+        self.last_pushed_at = None
 
         self._unsub_track = None
         self._unsub_interval = None
@@ -113,22 +123,39 @@ class PvSurplusController:
             return None
 
     async def async_evaluate(self) -> None:
+        # Recorded regardless of what happens below, so the raw inputs
+        # behind the decision can always be checked in the UI - including
+        # while suppressed or disabled.
+        self.last_read_values = {
+            "solar_w": self._read_float(self._solar_entity),
+            "grid_w": self._read_float(self._grid_entity),
+            "battery_w": self._read_float(self._battery_entity),
+            "powerwall_soc": self._read_float(self._soc_entity),
+        }
+
         if self._suppressed_by is not None and self._suppressed_by.suppress_pv:
             self.status_text = "Pausiert (Guenstigstrom-Tag aktiv)"
+            self.last_pushed_values = None
             async_dispatcher_send(self.hass, self.signal)
             return
 
         result = evaluate(
             PvPushInput(
                 enabled=self.enabled,
-                powerwall_soc=self._read_float(self._soc_entity),
+                powerwall_soc=self.last_read_values["powerwall_soc"],
                 threshold=self.threshold,
-                solar_w=self._read_float(self._solar_entity),
-                grid_w=self._read_float(self._grid_entity),
-                battery_w=self._read_float(self._battery_entity),
+                solar_w=self.last_read_values["solar_w"],
+                grid_w=self.last_read_values["grid_w"],
+                battery_w=self.last_read_values["battery_w"],
                 export_override_w=self.export_override_w,
             )
         )
+
+        # What we actually computed and attempted to send - kept even if
+        # the send itself below fails, since the point is to verify the
+        # *values*, not just whether the HTTP call succeeded (the status
+        # text already says so separately).
+        self.last_pushed_values = result.values
 
         if result.values is not None:
             # Always send - go-e needs a fresh value at least every ~5s
@@ -136,6 +163,7 @@ class PvSurplusController:
             # charging, so there is no "too often" here, only "too rare".
             try:
                 await self._goe.push_pv_values(result.values)
+                self.last_pushed_at = dt_util.utcnow()
             except Exception as exc:  # noqa: BLE001
                 _LOGGER.warning("Konnte PV-Werte nicht an go-e senden: %s", exc)
                 result.status_text += " - Senden an go-e fehlgeschlagen, versuche es weiter"
