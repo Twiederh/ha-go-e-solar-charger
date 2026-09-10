@@ -8,6 +8,7 @@ from .cheap_controller import CheapGridChargingController
 from .const import DOMAIN
 from .entity import device_info
 from .pv_controller import PvSurplusController
+from .pv_direct_controller import PvDirectController
 from .tesla_controller import TeslaChargingController
 from .zoe_controller import ZoeChargeLimitController
 
@@ -20,6 +21,7 @@ async def async_setup_entry(
         [
             ZoeStatusSensor(controllers["zoe"], entry),
             PvStatusSensor(controllers["pv"], entry),
+            PvDirectStatusSensor(controllers["pv_direct"], entry),
             CheapStatusSensor(controllers["cheap"], entry),
             TeslaStatusSensor(controllers["tesla"], entry),
         ]
@@ -136,6 +138,49 @@ class PvStatusSensor(SensorEntity):
         if self._controller.last_pushed_at is not None:
             attrs["letzte_uebertragung"] = self._controller.last_pushed_at.isoformat()
         return attrs
+
+    async def async_added_to_hass(self) -> None:
+        self.async_on_remove(
+            async_dispatcher_connect(self.hass, self._controller.signal, self._handle_update)
+        )
+
+    @callback
+    def _handle_update(self) -> None:
+        self.async_write_ha_state()
+
+
+class PvDirectStatusSensor(SensorEntity):
+    _attr_has_entity_name = True
+    _attr_name = "PV Direktsteuerung Status"
+    _attr_icon = "mdi:current-ac"
+    _attr_should_poll = False
+
+    def __init__(self, controller: PvDirectController, entry: ConfigEntry) -> None:
+        self._controller = controller
+        self._attr_unique_id = f"{entry.entry_id}_pv_direct_status"
+        self._attr_device_info = device_info(entry)
+
+    @property
+    def native_value(self) -> str:
+        return self._controller.status_text
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        # Same rationale as PvStatusSensor's attributes above: lets the
+        # unconfirmed parts of go-e's phase-switching API (see
+        # pv_direct_logic.py's module docstring) be checked against the
+        # charger's actual behaviour, rather than trusted blindly.
+        read = self._controller.last_read_values
+        computed = self._controller.last_computed_values
+        return {
+            "gelesen_solar_w": read.get("solar_w"),
+            "gelesen_netz_w": read.get("grid_w"),
+            "gelesen_akku_w": read.get("battery_w"),
+            "gelesen_powerwall_soc": read.get("powerwall_soc"),
+            "berechneter_ueberschuss_w": computed.get("available_power_w"),
+            "ziel_ampere": computed.get("target_amp"),
+            "ziel_phasen": computed.get("target_phase"),
+        }
 
     async def async_added_to_hass(self) -> None:
         self.async_on_remove(

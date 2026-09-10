@@ -51,6 +51,53 @@ MAX_PV_EXPORT_OVERRIDE_THRESHOLD = 20000
 # source sensor changes.
 PV_PUSH_KEEPALIVE_INTERVAL_SECONDS = 4
 
+# --- Direct Zoe/go-e charging control (alternative to the ids-push feature
+# above): instead of handing pPv/pGrid/pAkku to go-e's own PV-surplus
+# algorithm, this computes the target current (Amps) and phase count (1/3)
+# itself and sets them directly via "amp"/"psm" - see pv_direct_logic.py /
+# pv_direct_controller.py / goe_client.py. Offered as a switchable
+# alternative (select.py's PvControlModeSelect), not a replacement - go-e's
+# own documentation for phase-switching is inconsistent even in its own
+# issue tracker (goecharger/go-eCharger-API-v2 #58, #30), so this needs
+# verifying against the real charger, which is why every computed value is
+# also exposed as a sensor attribute (see sensor.py's PvDirectStatusSensor).
+CONF_PV_DIRECT_MAX_AMP = "pv_direct_max_amp"
+DEFAULT_PV_DIRECT_MAX_AMP = 16
+MIN_PV_DIRECT_MAX_AMP = 6
+MAX_PV_DIRECT_MAX_AMP = 32
+
+# go-e/vehicle hardware minimum - charging below this isn't possible at
+# all, regardless of the configured max above.
+PV_DIRECT_MIN_AMP = 6
+
+# Mains voltage assumed for the Watts <-> Amps conversion (single EU phase).
+PV_DIRECT_VOLTAGE_V = 230
+
+# Margin (Watts) required before actually switching phase count, applied
+# asymmetrically around the 3-phase minimum (min_amp * 3 * voltage) - see
+# pv_direct_logic.py. Without a margin, hovering right at that boundary
+# would flip phases back and forth on every evaluation.
+PV_DIRECT_PHASE_SWITCH_HYSTERESIS_W = 400
+
+# How often the current amp/phase/frc decision is re-applied even while it
+# hasn't changed, mirroring tesla_controller.REASSERT_INTERVAL_SECONDS -
+# guards against a manual override at the charger, or the car being
+# unplugged and reconnected, silently drifting away from what this
+# feature believes it last set.
+PV_DIRECT_REASSERT_INTERVAL_SECONDS = 240
+
+PV_CONTROL_MODE_SEND_VALUES = "send_values"
+PV_CONTROL_MODE_DIRECT = "direct"
+DEFAULT_PV_CONTROL_MODE = PV_CONTROL_MODE_SEND_VALUES
+
+# go-e local API v2 "psm" (phaseSwitchMode) values. Moderate confidence
+# only - go-e's own documentation disagrees with itself across sources on
+# this key (see comment above) - defensively verified via goe_client._set()
+# raising on a rejected value, and via the diagnostic sensor attributes.
+PSM_AUTO = 0
+PSM_FORCE_1_PHASE = 1
+PSM_FORCE_3_PHASE = 2
+
 # --- Tesla charge gating feature (plain on/off switch, gated by the same
 # Powerwall SoC/grid sensors already configured for the PV-surplus push
 # feature above, reusing its *live* threshold - with its own, lower,
@@ -126,5 +173,6 @@ PLATFORMS = ["number", "switch", "sensor", "button", "select"]
 
 SIGNAL_ZOE_STATUS_UPDATE = f"{DOMAIN}_zoe_status_update"
 SIGNAL_PV_STATUS_UPDATE = f"{DOMAIN}_pv_status_update"
+SIGNAL_PV_DIRECT_STATUS_UPDATE = f"{DOMAIN}_pv_direct_status_update"
 SIGNAL_CHEAP_STATUS_UPDATE = f"{DOMAIN}_cheap_status_update"
 SIGNAL_TESLA_STATUS_UPDATE = f"{DOMAIN}_tesla_status_update"

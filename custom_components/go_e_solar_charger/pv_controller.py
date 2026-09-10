@@ -23,8 +23,10 @@ from .const import (
     CONF_PV_GRID_ENTITY,
     CONF_PV_SOC_ENTITY,
     CONF_PV_SOLAR_ENTITY,
+    DEFAULT_PV_CONTROL_MODE,
     DEFAULT_PV_EXPORT_OVERRIDE_THRESHOLD,
     DEFAULT_PV_THRESHOLD,
+    PV_CONTROL_MODE_DIRECT,
     PV_PUSH_KEEPALIVE_INTERVAL_SECONDS,
     SIGNAL_PV_STATUS_UPDATE,
 )
@@ -59,6 +61,13 @@ class PvSurplusController:
             CONF_PV_EXPORT_OVERRIDE_THRESHOLD, DEFAULT_PV_EXPORT_OVERRIDE_THRESHOLD
         )
         self.enabled: bool = True
+        # Live-adjustable via select.py's PvControlModeSelect, not part of
+        # the config flow (same pattern as CheapCarPrioritySelect's
+        # car_priority) - which of this feature and pv_direct_controller.py
+        # is actually driving the charger. Kept here (rather than on the
+        # direct controller) since this is the "primary"/longer-standing
+        # feature and both share the threshold/export_override_w above.
+        self.control_mode: str = DEFAULT_PV_CONTROL_MODE
         self.status_text: str = "Initialisiere ..."
 
         # Exposed as sensor attributes (see sensor.py) so the actual
@@ -76,6 +85,12 @@ class PvSurplusController:
         # entirely (not even the zeroed safety values) on days it takes
         # over instead.
         self._suppressed_by = None
+        # Set by __init__.py right after construction - the alternative
+        # direct-control feature, kept in sync whenever the mode select
+        # changes so the switch takes effect immediately (see
+        # async_set_control_mode) rather than waiting for its own next
+        # sensor event.
+        self._direct_controller = None
 
     @property
     def signal(self) -> str:
@@ -83,6 +98,9 @@ class PvSurplusController:
 
     def set_suppressor(self, controller) -> None:
         self._suppressed_by = controller
+
+    def set_direct_controller(self, controller) -> None:
+        self._direct_controller = controller
 
     async def async_setup(self) -> None:
         entities = [self._solar_entity, self._grid_entity, self._battery_entity, self._soc_entity]
@@ -139,6 +157,12 @@ class PvSurplusController:
             async_dispatcher_send(self.hass, self.signal)
             return
 
+        if self.control_mode == PV_CONTROL_MODE_DIRECT:
+            self.status_text = "Inaktiv (Direkte Steuerung aktiv)"
+            self.last_pushed_values = None
+            async_dispatcher_send(self.hass, self.signal)
+            return
+
         result = evaluate(
             PvPushInput(
                 enabled=self.enabled,
@@ -182,6 +206,16 @@ class PvSurplusController:
     async def async_set_enabled(self, value: bool) -> None:
         self.enabled = value
         await self.async_evaluate()
+        if self._direct_controller is not None:
+            await self._direct_controller.async_evaluate()
+
+    async def async_set_control_mode(self, value: str) -> None:
+        self.control_mode = value
+        await self.async_evaluate()
+        if self._direct_controller is not None:
+            # Immediate hand-off in either direction, rather than waiting
+            # for the direct controller's own next sensor event/timer tick.
+            await self._direct_controller.async_evaluate()
 
     async def async_manual_push(self) -> None:
         """Immediate push regardless of threshold - used by the "Jetzt

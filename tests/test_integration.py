@@ -22,6 +22,8 @@ from custom_components.go_e_solar_charger.const import (
     CHEAP_PRIORITY_AUTO_FIRST,
     CHEAP_PRIORITY_TESLA_FIRST,
     DOMAIN,
+    PSM_AUTO,
+    PSM_FORCE_3_PHASE,
     PV_PUSH_KEEPALIVE_INTERVAL_SECONDS,
 )
 
@@ -1152,3 +1154,158 @@ async def test_custom_car_names_appear_everywhere(hass, enable_custom_integratio
         status = _state(hass, f"sensor.{DEVICE_SLUG}_guenstigstrom_status")
         assert "Zoe Ladelimit" in status
         assert "Model 3" in status
+
+
+@pytest.mark.asyncio
+async def test_pv_direct_control_mode_switch(hass, enable_custom_integrations):
+    """The direct-control feature is the switchable alternative to the
+    ids-push feature (PvControlModeSelect) - only one of the two may
+    actually drive the charger, and switching between them must hand off
+    immediately rather than waiting for the next sensor change."""
+    hass.states.async_set(ZOE_SOC_ENTITY, "50")
+    hass.states.async_set(ZOE_CHARGING_ENTITY, "off")
+    hass.states.async_set(ZOE_CONNECTED_ENTITY, "off")
+
+    hass.states.async_set(PV_SOC_ENTITY, "70")  # above the 50 % threshold
+    hass.states.async_set(PV_SOLAR_ENTITY, "6000")
+    hass.states.async_set(PV_GRID_ENTITY, "-6000")  # exporting 6000 W - plenty for 3 phases
+    hass.states.async_set(PV_BATTERY_ENTITY, "0")
+
+    with patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.stop_charging",
+        new=AsyncMock(),
+    ), patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.release",
+        new=AsyncMock(),
+    ) as mock_release, patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.push_pv_values",
+        new=AsyncMock(),
+    ) as mock_push, patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.force_charging_on",
+        new=AsyncMock(),
+    ) as mock_on, patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.set_amp",
+        new=AsyncMock(),
+    ) as mock_amp, patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.set_phase_mode",
+        new=AsyncMock(),
+    ) as mock_psm:
+        entry = await _make_entry(hass)
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+        mode_entity = f"select.{DEVICE_SLUG}_pv_steuerungsmodus"
+        status_entity = f"sensor.{DEVICE_SLUG}_pv_direktsteuerung_status"
+        assert hass.states.get(mode_entity) is not None
+        assert hass.states.get(f"number.{DEVICE_SLUG}_direkte_steuerung_max_ladestrom") is not None
+        assert hass.states.get(f"button.{DEVICE_SLUG}_direkte_steuerung_jetzt_anwenden") is not None
+
+        # Default mode is still "send values" - existing installs must not
+        # change behaviour on update.
+        assert hass.states.get(mode_entity).state == "Werte senden (go-e entscheidet)"
+        assert mock_push.call_count >= 1
+        assert mock_on.call_count == 0
+        assert _state(hass, status_entity) == "Inaktiv (Werte senden aktiv)"
+
+        # Switch to direct control - takes effect immediately.
+        await hass.services.async_call(
+            "select",
+            "select_option",
+            {
+                "entity_id": mode_entity,
+                "option": "Direkte Steuerung (Ampere/Phase)",
+            },
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+        assert "Laedt direkt" in _state(hass, status_entity)
+        assert mock_psm.call_args.args[0] == PSM_FORCE_3_PHASE
+        # 6000 W / (3 * 230 V) = 8.7 A, rounded to 9 A - well under the
+        # configured 16 A max, so no clamping kicks in here.
+        assert mock_amp.call_args.args[0] == 9
+        assert mock_on.call_count == 1
+        assert _state(hass, f"sensor.{DEVICE_SLUG}_pv_freigabe_status") == "Inaktiv (Direkte Steuerung aktiv)"
+
+        attrs = hass.states.get(status_entity).attributes
+        assert attrs["gelesen_solar_w"] == 6000.0
+        assert attrs["berechneter_ueberschuss_w"] == 6000.0
+        assert attrs["ziel_ampere"] == 9
+        assert attrs["ziel_phasen"] == 3
+
+        # Switch back to "send values" - hands go-e back (release + psm
+        # Auto) and the push feature resumes on its own.
+        push_calls_before = mock_push.call_count
+        await hass.services.async_call(
+            "select",
+            "select_option",
+            {
+                "entity_id": mode_entity,
+                "option": "Werte senden (go-e entscheidet)",
+            },
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+        assert mock_release.call_count == 1
+        assert mock_psm.call_args.args[0] == PSM_AUTO
+        assert _state(hass, status_entity) == "Inaktiv (Werte senden aktiv)"
+        assert mock_push.call_count > push_calls_before
+
+
+@pytest.mark.asyncio
+async def test_pv_direct_defers_to_zoe_charge_limit(hass, enable_custom_integrations):
+    """The direct-control feature must never start (or keep) charging a
+    car the Auto charge limit feature has independently stopped because it
+    hit its SoC limit - that stop always wins, regardless of PV surplus."""
+    hass.states.async_set(ZOE_SOC_ENTITY, "90")  # already at/above its 80 % limit
+    hass.states.async_set(ZOE_CHARGING_ENTITY, "on")
+    hass.states.async_set(ZOE_CONNECTED_ENTITY, "on")
+
+    hass.states.async_set(PV_SOC_ENTITY, "70")
+    hass.states.async_set(PV_SOLAR_ENTITY, "6000")
+    hass.states.async_set(PV_GRID_ENTITY, "-6000")
+    hass.states.async_set(PV_BATTERY_ENTITY, "0")
+
+    with patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.stop_charging",
+        new=AsyncMock(),
+    ) as mock_stop, patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.release",
+        new=AsyncMock(),
+    ), patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.push_pv_values",
+        new=AsyncMock(),
+    ), patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.force_charging_on",
+        new=AsyncMock(),
+    ) as mock_on, patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.set_amp",
+        new=AsyncMock(),
+    ), patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.set_phase_mode",
+        new=AsyncMock(),
+    ):
+        entry = await _make_entry(hass)
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+        assert mock_stop.call_count == 1  # the Auto charge limit stopped it already
+
+        await hass.services.async_call(
+            "select",
+            "select_option",
+            {
+                "entity_id": f"select.{DEVICE_SLUG}_pv_steuerungsmodus",
+                "option": "Direkte Steuerung (Ampere/Phase)",
+            },
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+        # Plenty of PV surplus, but the car's own limit takes priority -
+        # direct control must not try to start charging it.
+        assert mock_on.call_count == 0
+        assert "Ladelimit des Fahrzeugs aktiv" in _state(
+            hass, f"sensor.{DEVICE_SLUG}_pv_direktsteuerung_status"
+        )

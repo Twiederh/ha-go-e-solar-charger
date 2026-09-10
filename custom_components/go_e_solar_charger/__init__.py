@@ -14,7 +14,11 @@ Four independent features, one go-e Charger, one device in the HA UI:
   charging logic once the Powerwall's SoC is above a configurable
   threshold (or, below that threshold, once the Powerwall's own export
   exceeds a separate override threshold) - see pv_controller.py /
-  pv_logic.py. Talks to go-e via "ids".
+  pv_logic.py. Talks to go-e via "ids". Has a switchable alternative,
+  direct control (amp + phase switching), see pv_direct_controller.py /
+  pv_direct_logic.py - both share the same threshold/override numbers and
+  are switched via select.py's PvControlModeSelect; only one drives the
+  charger at a time.
 - Cheap-grid charging: on days with a poor solar forecast, suppresses the
   PV-surplus feature entirely and force-charges from the grid instead
   during a cheap price window - see cheap_controller.py / cheap_logic.py.
@@ -40,6 +44,7 @@ from homeassistant.core import HomeAssistant
 from .cheap_controller import CheapGridChargingController
 from .const import DOMAIN, PLATFORMS
 from .pv_controller import PvSurplusController
+from .pv_direct_controller import PvDirectController
 from .tesla_controller import TeslaChargingController
 from .zoe_controller import ZoeChargeLimitController
 
@@ -48,6 +53,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})
     zoe_controller = ZoeChargeLimitController(hass, entry)
     pv_controller = PvSurplusController(hass, entry)
+    pv_direct_controller = PvDirectController(
+        hass,
+        entry,
+        pv_controller,
+        zoe_controller=zoe_controller,
+        on_frc_changed=zoe_controller.async_evaluate,
+    )
+    pv_controller.set_direct_controller(pv_direct_controller)
     tesla_controller = TeslaChargingController(hass, entry, pv_controller)
     cheap_controller = CheapGridChargingController(
         hass,
@@ -57,10 +70,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         zoe_controller=zoe_controller,
     )
     pv_controller.set_suppressor(cheap_controller)
+    pv_direct_controller.set_suppressor(cheap_controller)
     tesla_controller.set_suppressor(cheap_controller)
     hass.data[DOMAIN][entry.entry_id] = {
         "zoe": zoe_controller,
         "pv": pv_controller,
+        "pv_direct": pv_direct_controller,
         "cheap": cheap_controller,
         "tesla": tesla_controller,
     }
@@ -72,6 +87,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     await zoe_controller.async_setup()
     await pv_controller.async_setup()
+    await pv_direct_controller.async_setup()
     await cheap_controller.async_setup()
     await tesla_controller.async_setup()
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
@@ -84,6 +100,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         controllers = hass.data[DOMAIN].pop(entry.entry_id)
         controllers["zoe"].async_unload()
         controllers["pv"].async_unload()
+        controllers["pv_direct"].async_unload()
         controllers["cheap"].async_unload()
         controllers["tesla"].async_unload()
     return unload_ok

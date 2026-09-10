@@ -31,7 +31,8 @@
           "pv_battery_entity_id": "Sensor: Batterieleistung der Powerwall (W)",
           "pv_soc_entity_id": "Sensor: Akkustand der Powerwall (%)",
           "pv_default_threshold": "PV-Freigabe ab Akkustand (%)",
-          "pv_export_override_threshold_w": "PV Sofort-Freigabe ab Einspeisung (W)"
+          "pv_export_override_threshold_w": "PV Sofort-Freigabe ab Einspeisung (W)",
+          "pv_direct_max_amp": "Direkte Steuerung: max. Ladestrom (A)"
         }
       },
       "cheap": {
@@ -86,7 +87,8 @@
           "pv_battery_entity_id": "Sensor: Batterieleistung der Powerwall (W)",
           "pv_soc_entity_id": "Sensor: Akkustand der Powerwall (%)",
           "pv_default_threshold": "PV-Freigabe ab Akkustand (%)",
-          "pv_export_override_threshold_w": "PV Sofort-Freigabe ab Einspeisung (W)"
+          "pv_export_override_threshold_w": "PV Sofort-Freigabe ab Einspeisung (W)",
+          "pv_direct_max_amp": "Direkte Steuerung: max. Ladestrom (A)"
         }
       },
       "cheap": {

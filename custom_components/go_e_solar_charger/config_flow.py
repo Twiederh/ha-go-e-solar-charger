@@ -14,6 +14,7 @@ from .const import (
     CONF_GOE_HOST,
     CONF_PV_BATTERY_ENTITY,
     CONF_PV_DEFAULT_THRESHOLD,
+    CONF_PV_DIRECT_MAX_AMP,
     CONF_PV_EXPORT_OVERRIDE_THRESHOLD,
     CONF_PV_GRID_ENTITY,
     CONF_PV_SOC_ENTITY,
@@ -31,6 +32,7 @@ from .const import (
     DEFAULT_CHEAP_FORECAST_THRESHOLD,
     DEFAULT_CHEAP_POWERWALL_CHARGE_THRESHOLD,
     DEFAULT_CHEAP_PRICE_THRESHOLD,
+    DEFAULT_PV_DIRECT_MAX_AMP,
     DEFAULT_PV_EXPORT_OVERRIDE_THRESHOLD,
     DEFAULT_PV_THRESHOLD,
     DEFAULT_TESLA_CAR_NAME,
@@ -43,6 +45,7 @@ from .const import (
     MAX_CHEAP_FORECAST_THRESHOLD,
     MAX_CHEAP_POWERWALL_CHARGE_THRESHOLD,
     MAX_CHEAP_PRICE_THRESHOLD,
+    MAX_PV_DIRECT_MAX_AMP,
     MAX_PV_EXPORT_OVERRIDE_THRESHOLD,
     MAX_PV_THRESHOLD,
     MAX_TESLA_GRID_RELEASE_THRESHOLD,
@@ -50,6 +53,7 @@ from .const import (
     MIN_CHEAP_FORECAST_THRESHOLD,
     MIN_CHEAP_POWERWALL_CHARGE_THRESHOLD,
     MIN_CHEAP_PRICE_THRESHOLD,
+    MIN_PV_DIRECT_MAX_AMP,
     MIN_PV_EXPORT_OVERRIDE_THRESHOLD,
     MIN_PV_THRESHOLD,
     MIN_TESLA_GRID_RELEASE_THRESHOLD,
@@ -165,6 +169,18 @@ def _pv_schema(defaults: dict) -> vol.Schema:
                     unit_of_measurement="W",
                 )
             ),
+            vol.Optional(
+                CONF_PV_DIRECT_MAX_AMP,
+                default=defaults.get(CONF_PV_DIRECT_MAX_AMP, DEFAULT_PV_DIRECT_MAX_AMP),
+            ): selector.NumberSelector(
+                selector.NumberSelectorConfig(
+                    min=MIN_PV_DIRECT_MAX_AMP,
+                    max=MAX_PV_DIRECT_MAX_AMP,
+                    step=1,
+                    mode=selector.NumberSelectorMode.SLIDER,
+                    unit_of_measurement="A",
+                )
+            ),
         }
     )
 
@@ -276,6 +292,8 @@ def _normalize(data: dict) -> dict:
         data[CONF_PV_DEFAULT_THRESHOLD] = int(data[CONF_PV_DEFAULT_THRESHOLD])
     if CONF_PV_EXPORT_OVERRIDE_THRESHOLD in data:
         data[CONF_PV_EXPORT_OVERRIDE_THRESHOLD] = int(data[CONF_PV_EXPORT_OVERRIDE_THRESHOLD])
+    if CONF_PV_DIRECT_MAX_AMP in data:
+        data[CONF_PV_DIRECT_MAX_AMP] = int(data[CONF_PV_DIRECT_MAX_AMP])
     if CONF_CHEAP_FORECAST_THRESHOLD in data:
         data[CONF_CHEAP_FORECAST_THRESHOLD] = int(data[CONF_CHEAP_FORECAST_THRESHOLD])
     if CONF_CHEAP_PRICE_THRESHOLD in data:

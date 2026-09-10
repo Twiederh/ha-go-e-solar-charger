@@ -52,6 +52,19 @@ class GoEClient:
         _LOGGER.info("Erzwinge Laden am go-e %s (frc=On)", self._host)
         await self._set("frc", FRC_ON)
 
+    async def set_amp(self, value: int) -> None:
+        """Requested charging current in Amps - used by the direct-control
+        feature (pv_direct_controller.py) instead of the ids/pPv-push
+        mechanism above."""
+        _LOGGER.info("Setze Ladestrom am go-e %s auf %s A", self._host, value)
+        await self._set("amp", value)
+
+    async def set_phase_mode(self, value: int) -> None:
+        """Phase switch mode ("psm") - see const.py's PSM_* constants and
+        their confidence caveat. Used only by the direct-control feature."""
+        _LOGGER.info("Setze Phasenmodus am go-e %s auf %s", self._host, value)
+        await self._set("psm", value)
+
     async def push_pv_values(self, values: dict) -> None:
         """values: e.g. {"pPv": 3200.5, "pGrid": -450.0, "pAkku": -1200.0}"""
         url = f"http://{self._host}/api/set"

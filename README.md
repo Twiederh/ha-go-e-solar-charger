@@ -94,6 +94,9 @@ Auto/Powerwall/go-e schon in Home Assistant haben.
    - "PV Sofort-Freigabe ab Einspeisung" in W (Standard 3100) - sobald die
      Powerwall trotz niedrigem Akkustand mehr als das ins Netz einspeist,
      werden die echten Werte trotzdem gesendet
+   - "Direkte Steuerung: max. Ladestrom" in A (Standard 16) - nur relevant,
+     wenn per `select.<name>_pv_steuerungsmodus` auf "Direkte Steuerung"
+     umgeschaltet wird, siehe unten
 5. Schritt "Guenstigstrom-Laden" (optional - Felder leer lassen, um das
    Feature vorerst nicht zu nutzen):
    - Sensor: Solar-Vorhersage fuer morgen (kWh)
@@ -164,6 +167,38 @@ sie sind.)
 - `button.<name>_pv_jetzt_senden` - schickt die aktuell berechneten Werte
   sofort, praktisch zum Testen der go-e-Verbindung, ohne auf die naechste
   Sensor-Aenderung oder den Keep-Alive-Tick zu warten.
+
+### PV Direktsteuerung (Alternative zu PV-Ueberschuss-Freigabe)
+
+Statt `pPv`/`pGrid`/`pAkku` an die eigene PV-Ueberschuss-Logik des go-e zu
+schicken, kann die Integration den Ladestrom (Ampere) und die Phasenzahl
+(1/3) auch direkt selbst setzen - siehe "Funktionsweise" unten fuer die
+Details und wichtige Einschraenkungen. Beide Methoden nutzen dieselbe
+Schwelle/Sofort-Freigabe-Schwelle aus "PV-Ueberschuss-Freigabe" oben; nur
+eine der beiden steuert den Charger tatsaechlich, umschaltbar per:
+
+- `select.<name>_pv_steuerungsmodus` - "Werte senden (go-e entscheidet)"
+  [Standard, bestehende Installationen aendern ihr Verhalten beim Update
+  also nicht] oder "Direkte Steuerung (Ampere/Phase)". Wirkt sofort,
+  jederzeit im Dashboard umstellbar, bleibt nach einem Neustart erhalten.
+- `number.<name>_direkte_steuerung_max_ladestrom` - Ampere-Obergrenze
+  (Standard 16 A = 3,7 kW 1-phasig / 11 kW 3-phasig), jederzeit im
+  Dashboard aenderbar, bleibt nach einem Neustart erhalten. Die Untergrenze
+  liegt fest bei 6 A (Hardware-Minimum von go-e/Fahrzeug).
+- `sensor.<name>_pv_direktsteuerung_status` - Klartext-Status ("Laedt
+  direkt: 9 A / 3-phasig (Ueberschuss 6000 W)", "Ueberschuss 800 W <
+  Minimum 1380 W - keine Ladung", "Wartet - Ladelimit des Fahrzeugs
+  aktiv", "Inaktiv (Werte senden aktiv)", "Inaktiv (Direkte Steuerung
+  aktiv)" [zeigt der jeweils *inaktive* Modus an seinem eigenen Sensor
+  an], ...). Zum Nachpruefen der (teils unsicheren, siehe unten)
+  go-e-API-Annahmen hat dieser Sensor dieselben Rohwert-Attribute wie
+  "PV-Freigabe Status" oben (`gelesen_solar_w`/`gelesen_netz_w`/
+  `gelesen_akku_w`/`gelesen_powerwall_soc`), zusaetzlich
+  `berechneter_ueberschuss_w` (die selbst berechnete verfuegbare
+  Ueberschussleistung), `ziel_ampere` und `ziel_phasen` (die zuletzt an
+  den go-e geschickte Vorgabe).
+- `button.<name>_direkte_steuerung_jetzt_anwenden` - wendet die aktuelle
+  Entscheidung sofort erneut an, praktisch zum Testen der go-e-Verbindung.
 
 ### Guenstigstrom-Laden
 
@@ -264,6 +299,48 @@ zusaetzlich alle 4 Sekunden erneut (`PV_PUSH_KEEPALIVE_INTERVAL_SECONDS`),
 auch wenn sich die Werte gar nicht geaendert haben. Die reine
 Entscheidungslogik steckt in `pv_logic.py`, frei von
 Home-Assistant-Importen.
+
+### PV Direktsteuerung
+
+Alternative zur "PV-Ueberschuss-Freigabe" oben (siehe deren Beschreibung
+fuer die identische Schwellen-/Sofort-Freigabe-Logik - hier nur die
+Unterschiede): statt dem go-e per `ids` die Rohwerte zu schicken und ihn
+selbst entscheiden zu lassen, berechnet die Integration Ladestrom (Ampere)
+und Phasenzahl (1/3) selbst und setzt sie direkt per `GET
+http://<go-e>/api/set?amp=<A>` bzw. `?psm=<0|1|2>`. Verfuegbare
+Ueberschussleistung = aktuelle Netzleistung (Einspeisung positiv
+gerechnet) + der zuletzt selbst vorgegebene Ladestrom (der ja bereits in
+der Netzleistung "steckt" - sonst wuerde der Ueberschuss mit jedem
+Ladeschritt kleiner statt nur die Verteilung sich aendern). Ab 3 * 6 A *
+230 V = 4140 W (abzueglich/zuzueglich eines Hysterese-Puffers von 400 W,
+je nachdem ob gerade 1- oder 3-phasig geladen wird, um ein Hin- und
+Herschalten an der Grenze zu vermeiden) wird auf 3 Phasen umgeschaltet,
+darunter auf 1 Phase; unterhalb von 6 A * 230 V = 1380 W wird das Laden
+komplett gestoppt.
+
+**Wichtige Einschraenkung:** anders als "PV-Ueberschuss-Freigabe" (die dem
+go-e nur Rohwerte liefert und ihn selbst per `frc` starten/stoppen laesst)
+muss dieses Feature `frc` selbst verwalten, da ein fest gesetzter
+Ladestrom nicht von selbst stoppt, wenn der Ueberschuss verschwindet. Das
+"Auto Ladelimit"-Feature (SoC-basiertes Stoppen) hat dabei immer Vorrang:
+ist es gerade aktiv gestoppt, versucht dieses Feature erst gar nicht zu
+laden ("Wartet - Ladelimit des Fahrzeugs aktiv"), egal wie viel
+Ueberschuss verfuegbar waere.
+
+**Zur Vorsicht:** go-e's eigene API-v2-Dokumentation ist beim Thema
+Phasenumschaltung nachweislich unvollstaendig/widerspruechlich (siehe z. B.
+die Issues #58 und #30 im offiziellen
+[go-eCharger-API-v2](https://github.com/goecharger/go-eCharger-API-v2)-Repo) -
+welcher `psm`-Wert genau welchen Modus bedeutet, ist nur mit mittlerer
+Sicherheit ermittelt. Deshalb: nach dem ersten Umschalten auf "Direkte
+Steuerung" unbedingt per `sensor.<name>_pv_direktsteuerung_status` und
+seinen Attributen (`ziel_ampere`/`ziel_phasen`) sowie am Ladegeraet selbst
+pruefen, ob die Phasenumschaltung tatsaechlich wie erwartet reagiert,
+bevor man sich darauf verlaesst - schlaegt ein Befehl fehl (z. B. weil
+`psm` einen falschen Wert bekommt), meldet der go-e das per HTTP-Fehler
+zurueck, statt ihn stillschweigend falsch umzusetzen (siehe
+`goe_client.py`'s `_set()`). Die reine Entscheidungslogik steckt in
+`pv_direct_logic.py`, frei von Home-Assistant-Importen.
 
 ### Guenstigstrom-Laden
 
@@ -391,6 +468,15 @@ Session keinen Netzwerkzugriff auf dein Heimnetz. Stattdessen:
 - `custom_components/go_e_solar_charger/tesla_logic.py` ebenso (SoC ueber/
   unter Schwelle, Einspeise-Freigabe trotz niedrigem SoC, deaktiviert, SoC
   nicht verfuegbar, ...).
+- `tests/test_pv_direct_logic.py` ebenso fuer
+  `custom_components/go_e_solar_charger/pv_direct_logic.py`, mit 16
+  Szenarien (deaktiviert, Ladelimit des Fahrzeugs aktiv, unter/ueber
+  Schwelle, Sofort-Freigabe, zu wenig Ueberschuss, 1-/3-phasiger Start,
+  Ampere-Begrenzung, Hysterese in beide Richtungen an der 3-Phasen-Grenze,
+  Ampere-Aenderung ohne Phasenwechsel, ...) - separat von den anderen
+  `*_logic.py`-Tests, da die Hysterese-/Rundungs-Grenzfaelle hier deutlich
+  praeziser als reine Funktionsaufrufe statt ueber die volle
+  HA-Integration zu pruefen sind.
 - `tests/test_integration.py` baut die komplette Integration (alle vier
   Funktionen) in einer echten (Test-)Home-Assistant-Instanz auf
   (`pytest-homeassistant-custom-component`), simuliert die
@@ -404,8 +490,12 @@ Session keinen Netzwerkzugriff auf dein Heimnetz. Stattdessen:
   in das Guenstigstrom-Laden (beide Fahrzeuge erzwungen, Unterdrueckung
   der eigenen Tesla-Logik, Powerwall-Ladearbitrierung inklusive Umschalten
   der Prioritaet live per Auswahl-Entitaet, Zurueckgeben der Kontrolle an
-  beide Fahrzeuge beim Deaktivieren) sowie der Faelle einer bestehenden,
-  noch nicht auf die jeweiligen Features konfigurierten Installation.
+  beide Fahrzeuge beim Deaktivieren), der Umschaltung zwischen
+  "PV-Ueberschuss-Freigabe" und "PV Direktsteuerung" (inklusive sofortiger
+  Wirkung, Zurueckgeben der Kontrolle an go-e beim Zurueckschalten, und
+  Vorrang des Auto-Ladelimits vor der Direktsteuerung) sowie der Faelle
+  einer bestehenden, noch nicht auf die jeweiligen Features konfigurierten
+  Installation.
 
 Zum Ausfuehren:
 

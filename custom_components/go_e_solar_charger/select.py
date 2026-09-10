@@ -14,7 +14,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 
-from .const import DOMAIN
+from .const import DOMAIN, PV_CONTROL_MODE_DIRECT, PV_CONTROL_MODE_SEND_VALUES
 from .entity import device_info
 
 
@@ -22,7 +22,50 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
     controllers = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities([CheapCarPrioritySelect(controllers["cheap"], entry)])
+    async_add_entities(
+        [
+            CheapCarPrioritySelect(controllers["cheap"], entry),
+            PvControlModeSelect(controllers["pv"], entry),
+        ]
+    )
+
+
+class PvControlModeSelect(SelectEntity, RestoreEntity):
+    """Switches between the two alternative PV-surplus-charging methods -
+    see pv_controller.py's `control_mode` and pv_direct_controller.py's
+    module docstring for why they're mutually exclusive rather than both
+    being applied at once."""
+
+    _attr_has_entity_name = True
+    _attr_name = "PV-Steuerungsmodus"
+    _attr_icon = "mdi:tune-variant"
+
+    OPTION_SEND_VALUES = "Werte senden (go-e entscheidet)"
+    OPTION_DIRECT = "Direkte Steuerung (Ampere/Phase)"
+    _VALUE_BY_OPTION = {
+        OPTION_SEND_VALUES: PV_CONTROL_MODE_SEND_VALUES,
+        OPTION_DIRECT: PV_CONTROL_MODE_DIRECT,
+    }
+    _OPTION_BY_VALUE = {value: option for option, value in _VALUE_BY_OPTION.items()}
+
+    def __init__(self, controller, entry: ConfigEntry) -> None:
+        self._controller = controller
+        self._attr_unique_id = f"{entry.entry_id}_pv_control_mode"
+        self._attr_options = [self.OPTION_SEND_VALUES, self.OPTION_DIRECT]
+        self._attr_current_option = self._OPTION_BY_VALUE[controller.control_mode]
+        self._attr_device_info = device_info(entry)
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        last_state = await self.async_get_last_state()
+        if last_state is not None and last_state.state in self._attr_options:
+            self._attr_current_option = last_state.state
+            self._controller.control_mode = self._VALUE_BY_OPTION[last_state.state]
+
+    async def async_select_option(self, option: str) -> None:
+        self._attr_current_option = option
+        self.async_write_ha_state()
+        await self._controller.async_set_control_mode(self._VALUE_BY_OPTION[option])
 
 
 class CheapCarPrioritySelect(SelectEntity, RestoreEntity):

@@ -7,6 +7,7 @@ from .cheap_controller import CheapGridChargingController
 from .const import DOMAIN
 from .entity import device_info
 from .pv_controller import PvSurplusController
+from .pv_direct_controller import PvDirectController
 from .tesla_controller import TeslaChargingController
 from .zoe_controller import ZoeChargeLimitController
 
@@ -19,6 +20,7 @@ async def async_setup_entry(
         [
             ZoeStopNowButton(controllers["zoe"], entry),
             PvPushNowButton(controllers["pv"], entry),
+            PvDirectTestNowButton(controllers["pv_direct"], entry),
             CheapTestNowButton(controllers["cheap"], entry),
             TeslaTestNowButton(controllers["tesla"], entry),
         ]
@@ -59,6 +61,24 @@ class PvPushNowButton(ButtonEntity):
 
     async def async_press(self) -> None:
         await self._controller.async_manual_push()
+
+
+class PvDirectTestNowButton(ButtonEntity):
+    """Re-applies the current direct-control decision (amp/phase/frc)
+    immediately - useful to verify the go-e connection without waiting for
+    the next sensor change or timer tick."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Direkte Steuerung Jetzt anwenden"
+    _attr_icon = "mdi:refresh"
+
+    def __init__(self, controller: PvDirectController, entry: ConfigEntry) -> None:
+        self._controller = controller
+        self._attr_unique_id = f"{entry.entry_id}_pv_direct_test_now"
+        self._attr_device_info = device_info(entry)
+
+    async def async_press(self) -> None:
+        await self._controller.async_manual_test()
 
 
 class CheapTestNowButton(ButtonEntity):
