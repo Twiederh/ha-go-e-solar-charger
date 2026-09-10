@@ -1189,7 +1189,10 @@ async def test_pv_direct_control_mode_switch(hass, enable_custom_integrations):
     ) as mock_amp, patch(
         "custom_components.go_e_solar_charger.goe_client.GoEClient.set_phase_mode",
         new=AsyncMock(),
-    ) as mock_psm:
+    ) as mock_psm, patch(
+        "custom_components.go_e_solar_charger.pv_controller.PvSurplusController._set_goe_pv_switch",
+        new=AsyncMock(),
+    ) as mock_goe_pv_switch:
         entry = await _make_entry(hass)
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
@@ -1227,6 +1230,11 @@ async def test_pv_direct_control_mode_switch(hass, enable_custom_integrations):
         assert mock_on.call_count == 1
         assert _state(hass, f"sensor.{DEVICE_SLUG}_pv_freigabe_status") == "Inaktiv (Direkte Steuerung aktiv)"
 
+        # go-e's *own* native PV-surplus switch must be turned off too -
+        # otherwise it keeps waiting for ids updates that direct control
+        # never sends, and can start fighting the amp/frc set directly.
+        assert mock_goe_pv_switch.call_args.args[0] is False
+
         attrs = hass.states.get(status_entity).attributes
         assert attrs["gelesen_solar_w"] == 6000.0
         assert attrs["berechneter_ueberschuss_w"] == 6000.0
@@ -1251,6 +1259,8 @@ async def test_pv_direct_control_mode_switch(hass, enable_custom_integrations):
         assert mock_psm.call_args.args[0] == PSM_AUTO
         assert _state(hass, status_entity) == "Inaktiv (Werte senden aktiv)"
         assert mock_push.call_count > push_calls_before
+        # ... and go-e's own PV switch is handed back too.
+        assert mock_goe_pv_switch.call_args.args[0] is True
 
 
 @pytest.mark.asyncio
@@ -1309,3 +1319,96 @@ async def test_pv_direct_defers_to_zoe_charge_limit(hass, enable_custom_integrat
         assert "Ladelimit des Fahrzeugs aktiv" in _state(
             hass, f"sensor.{DEVICE_SLUG}_pv_direktsteuerung_status"
         )
+
+
+@pytest.mark.asyncio
+async def test_cheap_exit_does_not_reenable_goe_pv_switch_in_direct_mode(
+    hass, enable_custom_integrations
+):
+    """Cheap-grid-charging turns go-e's own PV switch back on when a
+    low-solar day ends - but only if the ids-push method actually owns
+    that switch. While direct control is the active mode, that hand-back
+    would immediately fight pv_controller.py's own management of the same
+    switch (which wants it kept off - see pv_direct_controller.py)."""
+    hass.states.async_set(ZOE_SOC_ENTITY, "50")
+    hass.states.async_set(ZOE_CHARGING_ENTITY, "off")
+    hass.states.async_set(ZOE_CONNECTED_ENTITY, "off")
+    hass.states.async_set(PV_SOC_ENTITY, "70")
+    hass.states.async_set(PV_SOLAR_ENTITY, "6000")
+    hass.states.async_set(PV_GRID_ENTITY, "-6000")
+    hass.states.async_set(PV_BATTERY_ENTITY, "0")
+
+    hass.states.async_set(CHEAP_FORECAST_ENTITY, "18")  # below the 30 kWh threshold
+    hass.states.async_set(CHEAP_PRICE_ENTITY, CHEAP_PRICE_EXPENSIVE)
+    hass.states.async_set(CHEAP_GOE_PV_SWITCH_ENTITY, "on")
+
+    with patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.stop_charging",
+        new=AsyncMock(),
+    ), patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.release",
+        new=AsyncMock(),
+    ), patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.force_charging_on",
+        new=AsyncMock(),
+    ), patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.push_pv_values",
+        new=AsyncMock(),
+    ), patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.set_amp",
+        new=AsyncMock(),
+    ), patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.set_phase_mode",
+        new=AsyncMock(),
+    ), patch(
+        "custom_components.go_e_solar_charger.cheap_controller.CheapGridChargingController._set_goe_pv_switch",
+        new=AsyncMock(),
+    ) as mock_cheap_switch, patch(
+        "custom_components.go_e_solar_charger.pv_controller.PvSurplusController._set_goe_pv_switch",
+        new=AsyncMock(),
+    ) as mock_pv_switch:
+        entry = await _make_entry(hass)
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+        # Already a low-solar day at setup - the switch is off, owned by
+        # cheap-grid-charging for the day. (pv_controller.py's own startup
+        # sync may have already fired once before cheap-grid-charging's
+        # own async_setup() latched today's suppression a moment later -
+        # a harmless startup-ordering quirk also already present in the
+        # existing PV-push feature; only calls from here on matter.)
+        assert mock_cheap_switch.call_args.args == (False,)
+        pv_switch_calls_after_setup = mock_pv_switch.call_count
+
+        # Switch to direct control while still suppressed - the actual
+        # go-e switch call is deferred to cheap-grid-charging's exit
+        # rather than fought over immediately (see
+        # PvSurplusController.async_set_control_mode's suppression guard).
+        await hass.services.async_call(
+            "select",
+            "select_option",
+            {
+                "entity_id": f"select.{DEVICE_SLUG}_pv_steuerungsmodus",
+                "option": "Direkte Steuerung (Ampere/Phase)",
+            },
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+        assert mock_pv_switch.call_count == pv_switch_calls_after_setup
+
+        # Next evening: good forecast -> next midnight rolls the
+        # suppression back off.
+        hass.states.async_set(CHEAP_FORECAST_ENTITY, "45")
+        _fire_evening_eval(hass)
+        await hass.async_block_till_done()
+        hass.states.async_set(CHEAP_PRICE_ENTITY, CHEAP_PRICE_CHEAP)
+        await hass.async_block_till_done()
+
+        # Cheap-grid-charging must NOT turn the switch back on - direct
+        # control is still the active mode and wants it kept off.
+        assert mock_cheap_switch.call_args.args != (True,)
+        assert mock_pv_switch.call_count == pv_switch_calls_after_setup
+
+        # And direct control actually resumed (rather than staying stuck
+        # "Pausiert" from the suppression that just ended).
+        assert "Laedt direkt" in _state(hass, f"sensor.{DEVICE_SLUG}_pv_direktsteuerung_status")

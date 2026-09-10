@@ -327,6 +327,21 @@ ist es gerade aktiv gestoppt, versucht dieses Feature erst gar nicht zu
 laden ("Wartet - Ladelimit des Fahrzeugs aktiv"), egal wie viel
 Ueberschuss verfuegbar waere.
 
+Ebenfalls wichtig: sobald "Direkte Steuerung" aktiv wird, schaltet die
+Integration automatisch auch go-es **eigenen** PV-Ueberschussladen-Schalter
+aus (denselben, den auch "Guenstigstrom-Laden" unter
+`cheap_goe_pv_switch_entity_id` verwendet - siehe unten; ohne diesen
+Schalter konfiguriert entfaellt dieser Teil einfach). Grund: ohne ids-
+Push wuerde go-e nach ein paar Sekunden ohne frische Werte annehmen, die
+PV-Quelle sei weg, und selbststaendig eingreifen - was genau den amp-/
+frc-Vorgaben der Direktsteuerung in die Quere kommen wuerde. Beim
+Zurueckschalten auf "Werte senden" wird der Schalter wieder eingeschaltet.
+Waehrend ein Guenstigstrom-Tag beide PV-Methoden ohnehin komplett
+pausiert, bleibt dieser Schalter dessen eigene Sache (er schaltet ihn fuer
+den ganzen Tag aus und am naechsten Mitternacht-Rollover wieder ein, ausser
+"Direkte Steuerung" ist zu dem Zeitpunkt der aktive Modus - dann bleibt er
+aus, statt sofort wieder mit der Direktsteuerung zu kollidieren).
+
 **Zur Vorsicht:** go-e's eigene API-v2-Dokumentation ist beim Thema
 Phasenumschaltung nachweislich unvollstaendig/widerspruechlich (siehe z. B.
 die Issues #58 und #30 im offiziellen

@@ -15,6 +15,7 @@ from homeassistant.helpers.event import (
 from homeassistant.util import dt as dt_util
 
 from .const import (
+    CONF_CHEAP_GOE_PV_SWITCH_ENTITY,
     CONF_GOE_API_KEY,
     CONF_GOE_HOST,
     CONF_PV_BATTERY_ENTITY,
@@ -48,6 +49,14 @@ class PvSurplusController:
         self._grid_entity = config[CONF_PV_GRID_ENTITY]
         self._battery_entity = config[CONF_PV_BATTERY_ENTITY]
         self._soc_entity = config[CONF_PV_SOC_ENTITY]
+        # go-e's *own* native PV-surplus-charging switch (same entity the
+        # cheap-grid-charging feature toggles for its forced-charging
+        # window, configured under its "Guenstigstrom-Laden" step even
+        # though it's used here too) - kept off while direct control is
+        # driving the charger, so go-e's own algorithm doesn't notice the
+        # ids updates have stopped (see PV_PUSH_KEEPALIVE_INTERVAL_SECONDS)
+        # and start fighting the amp/frc this feature sets directly.
+        self._goe_pv_switch_entity = config.get(CONF_CHEAP_GOE_PV_SWITCH_ENTITY)
         self._goe = GoEClient(
             async_get_clientsession(hass),
             config[CONF_GOE_HOST],
@@ -113,6 +122,13 @@ class PvSurplusController:
             self._handle_tick,
             timedelta(seconds=PV_PUSH_KEEPALIVE_INTERVAL_SECONDS),
         )
+        # Covers a restart landing back in direct-control mode (restored
+        # by the select entity before this runs - see __init__.py) - the
+        # switch needs to already be off in that case too, not just on a
+        # live mode change. Skipped while suppressed: that's cheap-grid-
+        # charging's own call to make (see _sync_goe_pv_switch_for_mode).
+        if not (self._suppressed_by is not None and self._suppressed_by.suppress_pv):
+            await self._sync_goe_pv_switch_for_mode()
         await self.async_evaluate()
 
     def async_unload(self) -> None:
@@ -211,11 +227,42 @@ class PvSurplusController:
 
     async def async_set_control_mode(self, value: str) -> None:
         self.control_mode = value
+        if not (self._suppressed_by is not None and self._suppressed_by.suppress_pv):
+            # While a Guenstigstrom-Tag is suppressing both PV methods,
+            # that feature already owns this switch (off for the whole
+            # day, restored on its own exit) - touching it here too would
+            # fight that, e.g. turning it back on mid-suppression just
+            # because the mode select changed underneath it.
+            await self._sync_goe_pv_switch_for_mode()
         await self.async_evaluate()
         if self._direct_controller is not None:
             # Immediate hand-off in either direction, rather than waiting
             # for the direct controller's own next sensor event/timer tick.
             await self._direct_controller.async_evaluate()
+
+    async def _sync_goe_pv_switch_for_mode(self) -> None:
+        """Keeps go-e's own PV-surplus switch off while direct control is
+        the active mode, on otherwise - see the constructor comment for
+        why. A no-op if that switch wasn't configured at all."""
+        if not self._goe_pv_switch_entity:
+            return
+        await self._set_goe_pv_switch(self.control_mode != PV_CONTROL_MODE_DIRECT)
+
+    async def _set_goe_pv_switch(self, on: bool) -> None:
+        try:
+            await self.hass.services.async_call(
+                "switch",
+                "turn_on" if on else "turn_off",
+                {"entity_id": self._goe_pv_switch_entity},
+                blocking=True,
+            )
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.warning(
+                "Konnte %s nicht %s: %s",
+                self._goe_pv_switch_entity,
+                "einschalten" if on else "ausschalten",
+                exc,
+            )
 
     async def async_manual_push(self) -> None:
         """Immediate push regardless of threshold - used by the "Jetzt

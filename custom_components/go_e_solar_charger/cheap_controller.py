@@ -52,6 +52,7 @@ from .const import (
     DEFAULT_TESLA_CAR_NAME,
     DEFAULT_ZOE_CAR_CONNECTED_ON_STATE,
     DEFAULT_ZOE_CAR_NAME,
+    PV_CONTROL_MODE_DIRECT,
     SIGNAL_CHEAP_STATUS_UPDATE,
 )
 from .goe_client import GoEClient
@@ -79,12 +80,20 @@ class CheapGridChargingController:
         on_frc_changed=None,
         tesla_controller=None,
         zoe_controller=None,
+        pv_controller=None,
+        pv_direct_controller=None,
     ) -> None:
         self.hass = hass
         self.entry = entry
         self._on_frc_changed = on_frc_changed
         self._tesla_controller = tesla_controller
         self._zoe_controller = zoe_controller
+        # Only needed to avoid fighting pv_controller.py's own management
+        # of the go-e PV switch while direct control (rather than the
+        # ids-push method) is the active mode - see _apply_rollover_action
+        # below and pv_controller.py's _sync_goe_pv_switch_for_mode.
+        self._pv_controller = pv_controller
+        self._pv_direct_controller = pv_direct_controller
         config = {**entry.data, **entry.options}
         self._forecast_entity = config.get(CONF_CHEAP_FORECAST_ENTITY)
         self._price_entity = config.get(CONF_CHEAP_PRICE_ENTITY)
@@ -382,13 +391,27 @@ class CheapGridChargingController:
                 await self._set_goe_pv_switch(False)
         elif action is not None:  # ACTION_EXIT_LOW_SOLAR_DAY
             self._suppressing = False
-            if self.enabled:
+            # Only hand the go-e PV switch back on if the ids-push method
+            # is actually the one meant to own it right now - if direct
+            # control is the active mode, pv_controller.py's own
+            # _sync_goe_pv_switch_for_mode wants it kept off, and this
+            # would otherwise fight that the moment suppression lifts.
+            direct_mode_active = (
+                self._pv_controller is not None
+                and self._pv_controller.control_mode == PV_CONTROL_MODE_DIRECT
+            )
+            if self.enabled and not direct_mode_active:
                 await self._set_goe_pv_switch(True)
         if action is not None and self._tesla_controller is not None:
             # Let the Tesla controller's own (suppression-aware) evaluate()
             # immediately reflect the new suppression state, rather than
             # waiting for its next sensor change.
             await self._tesla_controller.async_evaluate()
+        if action is not None and self._pv_direct_controller is not None:
+            # Same idea for direct control - its own re-evaluation would
+            # otherwise only happen on its next sensor event or (up to
+            # PV_DIRECT_REASSERT_INTERVAL_SECONDS later) its own timer.
+            await self._pv_direct_controller.async_evaluate()
 
     async def _apply_zoe_charging(self, should_charge: bool, *, stop_mode: str) -> None:
         if should_charge == self._zoe_charging:
