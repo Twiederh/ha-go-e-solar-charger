@@ -119,6 +119,10 @@ class PvDirectController:
         # evaluation - reset back to False as soon as go-e stops confirming
         # "not charging" (goes back to True, or to unknown/None).
         self._frc_reasserted_for_stall: bool = False
+        # Raw go-e "nrg[11]" reading behind actual_car_draw_w below - None
+        # while not charging (never read) or on a failed/unparsable read,
+        # otherwise the live measured total power in Watts.
+        self.last_total_power_w: Optional[float] = None
 
         self._unsub_track = None
         self._unsub_interval = None
@@ -189,6 +193,20 @@ class PvDirectController:
             return None
         return car_state == CAR_STATE_CHARGING
 
+    async def _read_actual_car_draw(self) -> Optional[float]:
+        """None on any read failure - treated by pv_direct_logic.py as
+        "unknown, fall back to the amp/phase guess" rather than "drawing
+        zero", so a transient go-e/network hiccup can't wrongly stop or
+        throttle an otherwise-fine charge."""
+        try:
+            power_w = await self._goe.get_total_power_w()
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.debug("Konnte go-e-Ladeleistung nicht lesen: %s", exc)
+            self.last_total_power_w = None
+            return None
+        self.last_total_power_w = power_w
+        return power_w
+
     async def async_evaluate(self) -> None:
         self.last_read_values = {
             "solar_w": self._read_float(self._solar_entity),
@@ -232,6 +250,13 @@ class PvDirectController:
         if self._charging_active or (self._pv.enabled and not zoe_force_off):
             car_actually_charging = await self._read_car_actually_charging()
 
+        # Only meaningful while we believe we're driving a charge - see
+        # pv_direct_logic.py's module docstring ("third gap") and
+        # goe_client.py's get_total_power_w().
+        actual_car_draw_w = None
+        if self._charging_active:
+            actual_car_draw_w = await self._read_actual_car_draw()
+
         result = evaluate(
             PvDirectInput(
                 enabled=self._pv.enabled,
@@ -246,6 +271,7 @@ class PvDirectController:
                 active_amp=self._active_amp,
                 active_phase=self._active_phase,
                 car_actually_charging=car_actually_charging,
+                actual_car_draw_w=actual_car_draw_w,
                 zoe_force_off_active=zoe_force_off,
                 phase_switch_hysteresis_w=PV_DIRECT_PHASE_SWITCH_HYSTERESIS_W,
             )
@@ -323,6 +349,7 @@ class PvDirectController:
             "target_phase": result.target_phase,
             "car_actually_charging": car_actually_charging,
             "goe_car_state": self.last_car_state,
+            "actual_car_draw_w": actual_car_draw_w,
         }
         applied_ok = await self._apply(
             result.action, result.status_text, result.target_amp, result.target_phase, reassert_frc

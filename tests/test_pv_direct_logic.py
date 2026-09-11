@@ -32,6 +32,7 @@ def _base(**overrides) -> PvDirectInput:
         active_amp=None,
         active_phase=None,
         car_actually_charging=True,
+        actual_car_draw_w=None,
         zoe_force_off_active=False,
         phase_switch_hysteresis_w=HYSTERESIS,
     )
@@ -226,3 +227,66 @@ def test_unknown_charging_state_still_trusts_the_assumption():
         )
     )
     assert result.available_power_w == 1880
+
+
+def test_real_measured_draw_is_preferred_over_the_amp_phase_guess():
+    # Reported in practice: commanded/last-active 13 A / 3-phase (8970 W
+    # guess), confirmed charging, but the car's own charge curve is
+    # tapering near full and it's actually only pulling 3000 W - go-e's
+    # live "nrg" reading (actual_car_draw_w) must be trusted over the
+    # stale amp*phase*230 guess, or the surplus stays badly overstated
+    # (500 + 8970 = 9470 W instead of the real 500 + 3000 = 3500 W).
+    result = evaluate(
+        _base(
+            grid_w=-500.0,
+            charging_active=True,
+            active_amp=13,
+            active_phase=3,
+            car_actually_charging=True,
+            actual_car_draw_w=3000.0,
+        )
+    )
+    assert result.available_power_w == 3500
+
+
+def test_real_measured_draw_of_zero_is_not_treated_as_unavailable():
+    # A live reading of exactly 0 W (car confirmed charging but momentarily
+    # drawing nothing, e.g. mid phase-switch) must still be trusted, not
+    # confused with "no reading available" (None) and fall back to the
+    # stale guess.
+    result = evaluate(
+        _base(
+            grid_w=-500.0,
+            charging_active=True,
+            active_amp=13,
+            active_phase=3,
+            car_actually_charging=True,
+            actual_car_draw_w=0.0,
+        )
+    )
+    assert result.available_power_w == 500
+
+
+def test_missing_real_draw_falls_back_to_the_amp_phase_guess():
+    # actual_car_draw_w=None (go-e's nrg read failed/unavailable) must
+    # behave exactly as before this feature existed - fall back to the
+    # amp*phase*230 guess, still gated by car_actually_charging.
+    result = evaluate(
+        _base(
+            grid_w=-500.0,
+            charging_active=True,
+            active_amp=6,
+            active_phase=1,
+            car_actually_charging=True,
+            actual_car_draw_w=None,
+        )
+    )
+    assert result.available_power_w == 1880
+
+
+def test_real_draw_is_ignored_while_not_charging():
+    # actual_car_draw_w must only ever apply while charging_active is
+    # True - a stray/unrelated value while we're not driving a charge at
+    # all must not phantom-add anything.
+    result = evaluate(_base(grid_w=-500.0, charging_active=False, actual_car_draw_w=5000.0))
+    assert result.available_power_w == 500

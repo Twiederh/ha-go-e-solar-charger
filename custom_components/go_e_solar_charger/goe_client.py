@@ -96,3 +96,34 @@ class GoEClient:
             return int(body.get("car"))
         except (TypeError, ValueError):
             return None
+
+    async def get_total_power_w(self) -> Optional[float]:
+        """Live total charging power from go-e's "nrg" status array.
+        Reported in practice: this feature's "assumed car draw" guess
+        (last-commanded amp * phase * 230 V, see pv_direct_logic.py's
+        module docstring) can badly overstate the surplus not just when
+        the car has stopped entirely (see get_car_state() above), but
+        also when it's charging at *less* than commanded - e.g. its own
+        charge curve tapering as the battery nears full - which a plain
+        charging/not-charging check can't catch at all.
+
+        go-e's "nrg" field itself isn't documented reliably enough to
+        trust blindly (same caveat as psm - see this module's docstring),
+        so index 11 is used only because it was cross-checked against a
+        real device: it exactly equalled the sum of the three per-phase
+        power readings at indices 7-9 in every status snapshot seen so
+        far, which is a much stronger basis than trusting the field name/
+        position from documentation alone. Returns None if "nrg" is
+        missing, too short, or unparsable, rather than raising - callers
+        treat that as "unknown" and fall back to the amp/phase guess.
+        """
+        url = f"http://{self._host}/api/status"
+        async with self._session.get(
+            url, headers=self._headers(), timeout=TIMEOUT
+        ) as response:
+            response.raise_for_status()
+            body = await response.json(content_type=None)
+        try:
+            return float(body.get("nrg")[11])
+        except (TypeError, ValueError, IndexError):
+            return None

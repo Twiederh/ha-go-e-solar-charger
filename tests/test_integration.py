@@ -1459,7 +1459,15 @@ async def test_pv_direct_corrects_surplus_once_goe_confirms_not_charging(
     ), patch(
         "custom_components.go_e_solar_charger.goe_client.GoEClient.get_car_state",
         new=AsyncMock(return_value=None),
-    ) as mock_car_state:
+    ) as mock_car_state, patch(
+        # Not exercised by this test (see test_pv_direct_prefers_real_
+        # measured_draw_over_the_amp_phase_guess below for that) - mocked
+        # to None purely so this test's amp math keeps using the plain
+        # amp/phase guess deterministically, without a real (if harmless)
+        # network call to the fake go-e host on every evaluation.
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.get_total_power_w",
+        new=AsyncMock(return_value=None),
+    ):
         entry = await _make_entry(hass)
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
@@ -1604,6 +1612,11 @@ async def test_pv_direct_does_not_resend_psm_on_a_bare_amp_update(
     ), patch(
         "custom_components.go_e_solar_charger.goe_client.GoEClient.get_car_state",
         new=AsyncMock(return_value=None),
+    ), patch(
+        # Kept as the plain amp/phase guess for this test's exact amp math -
+        # see the comment on the same patch further up.
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.get_total_power_w",
+        new=AsyncMock(return_value=None),
     ):
         entry = await _make_entry(hass)
         assert await hass.config_entries.async_setup(entry.entry_id)
@@ -1704,6 +1717,12 @@ async def test_pv_direct_reasserts_stop_when_goe_never_actually_stopped(
         "custom_components.go_e_solar_charger.goe_client.GoEClient.get_car_state",
         new=AsyncMock(return_value=2),  # CAR_STATE_CHARGING throughout
     ) as mock_car_state, patch(
+        # Kept as the plain amp/phase guess for this test's exact
+        # available-power math - see the comment on the same patch further
+        # up in this file.
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.get_total_power_w",
+        new=AsyncMock(return_value=None),
+    ), patch(
         "custom_components.go_e_solar_charger.pv_direct_controller.time.monotonic",
         new=lambda: fake_now[0],
     ):
@@ -1770,3 +1789,110 @@ async def test_pv_direct_reasserts_stop_when_goe_never_actually_stopped(
         )
         await hass.async_block_till_done()
         assert mock_stop.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_pv_direct_prefers_real_measured_draw_over_the_amp_phase_guess(
+    hass, enable_custom_integrations
+):
+    """Reported in practice: charging pauses briefly and then resumes at a
+    much higher amp/phase target than the real PV surplus (5.6 kW solar,
+    1.8 kW consumption) justifies - "Laedt direkt: 13 A / 3-phasig
+    (Ueberschuss 9124 W)" while the car itself can't have been pulling
+    anywhere near that. Root cause: the "assumed car draw" feedback (see
+    pv_direct_logic.py) keeps assuming the last *commanded* amp/phase is
+    still flowing even once the car's own charge curve tapers off near
+    full - a plain charging/not-charging check can't catch that, only a
+    real power reading can. Once go-e's live "nrg" reading is available,
+    it must be used instead of the stale amp*phase guess."""
+    hass.states.async_set(ZOE_SOC_ENTITY, "50")
+    hass.states.async_set(ZOE_CHARGING_ENTITY, "off")
+    hass.states.async_set(ZOE_CONNECTED_ENTITY, "off")
+
+    hass.states.async_set(PV_SOC_ENTITY, "70")
+    hass.states.async_set(PV_SOLAR_ENTITY, "6000")
+    hass.states.async_set(PV_GRID_ENTITY, "-6000")  # exporting 6000 W throughout
+    hass.states.async_set(PV_BATTERY_ENTITY, "0")
+
+    with patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.stop_charging",
+        new=AsyncMock(),
+    ), patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.release",
+        new=AsyncMock(),
+    ), patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.push_pv_values",
+        new=AsyncMock(),
+    ), patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.force_charging_on",
+        new=AsyncMock(),
+    ), patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.set_amp",
+        new=AsyncMock(),
+    ) as mock_amp, patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.set_phase_mode",
+        new=AsyncMock(),
+    ), patch(
+        "custom_components.go_e_solar_charger.pv_controller.PvSurplusController._set_goe_pv_switch",
+        new=AsyncMock(),
+    ), patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.get_car_state",
+        new=AsyncMock(return_value=2),  # CAR_STATE_CHARGING
+    ), patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.get_total_power_w",
+        new=AsyncMock(return_value=None),
+    ) as mock_power:
+        entry = await _make_entry(hass)
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+        await hass.services.async_call(
+            "select",
+            "select_option",
+            {
+                "entity_id": f"select.{DEVICE_SLUG}_pv_steuerungsmodus",
+                "option": "Direkte Steuerung (Ampere/Phase)",
+            },
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+        # Initial start: no real power reading yet possible (wasn't
+        # charging a moment ago), so it's still the plain guess -
+        # 6000 W / (3 * 230 V) = 8.7 A, rounded to 9 A.
+        assert mock_amp.call_args.args[0] == 9
+        assert mock_power.call_count == 0
+
+        # Now go-e's own live measurement says the car is actually only
+        # drawing 1000 W (charge curve tapering near full) - NOT the
+        # 9 A * 3 * 230 V = 6210 W the plain guess would still assume.
+        # The real reading must be used: 6000 (export) + 1000 (real draw)
+        # = 7000 W available, i.e. 10 A - not the wildly overstated
+        # 6000 + 6210 = 12210 W (which would clamp to the 16 A max).
+        mock_power.return_value = 1000.0
+        button_entity = f"button.{DEVICE_SLUG}_direkte_steuerung_jetzt_anwenden"
+        await hass.services.async_call(
+            "button", "press", {"entity_id": button_entity}, blocking=True
+        )
+        await hass.async_block_till_done()
+        assert mock_power.call_count == 1
+        assert mock_amp.call_args.args[0] == 10
+
+        status_entity = f"sensor.{DEVICE_SLUG}_pv_direktsteuerung_status"
+        attrs = hass.states.get(status_entity).attributes
+        assert attrs["berechneter_ueberschuss_w"] == 7000.0
+        assert attrs["echte_ladeleistung_w"] == 1000.0
+
+        # go-e's live reading becomes unavailable again (network hiccup) -
+        # must fall back to the plain guess rather than treating the read
+        # failure as "drawing zero", which would wrongly stop the charge.
+        mock_power.return_value = None
+        await hass.services.async_call(
+            "button", "press", {"entity_id": button_entity}, blocking=True
+        )
+        await hass.async_block_till_done()
+        # Now assumes the last-applied 10 A / 3-phase = 6900 W is flowing:
+        # 6000 + 6900 = 12900 W, clamped to the 16 A max.
+        assert mock_amp.call_args.args[0] == 16
+        attrs = hass.states.get(status_entity).attributes
+        assert attrs["echte_ladeleistung_w"] is None

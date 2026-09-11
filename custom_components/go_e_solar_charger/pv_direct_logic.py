@@ -44,6 +44,26 @@ charging is False below), while still trusting the assumption when that
 read is unavailable/unknown (None) rather than needlessly interrupting a
 charge over a transient status-read hiccup.
 
+Reported in practice, a third gap in the same "assumed draw" trick: the
+car can also be confirmed *actually charging* (car_actually_charging is
+True) while drawing noticeably *less* than last commanded - e.g. its own
+charge curve tapering off as the battery nears full - which a plain
+charging/not-charging check can never catch, since it only ever answers
+yes/no, not "how much". Observed in practice: 13 A/3-phase commanded and
+confirmed charging, but the car only actually pulling a fraction of that,
+while the assumed-draw guess kept adding the full 13 A/3-phase into
+available_power_w regardless, showing "Ueberschuss 9124 W" and charging
+back up to a needlessly high amp/phase target the moment any real export
+appeared. To close this, go-e's live measured total power (its "nrg"
+status array, index 11 - see goe_client.py's get_total_power_w() for how
+that index was itself verified without trusting go-e's documentation
+blindly) is preferred over the amp*phase*230 guess whenever available,
+falling back to the guess only when that live reading is missing/
+unparsable (actual_car_draw_w is None below) - same fallback philosophy
+as car_actually_charging above: trust the read when we have it, keep the
+existing assumption when we don't, rather than needlessly interrupting a
+charge over a transient status-read hiccup.
+
 Also defers entirely to the Auto charge limit feature's SoC-based stop
 (zoe_force_off_active below, mirroring ZoeChargeLimitController.
 force_off_active) - this feature must never fight that or re-enable
@@ -95,6 +115,15 @@ class PvDirectInput:
     # Complete/Error/Unknown), None if that read failed/is unavailable
     # (treated the same as True - see module docstring).
     car_actually_charging: Optional[bool]
+    # Live measured total charging power (Watts) from go-e's own "nrg"
+    # status field (see goe_client.py's get_total_power_w()), preferred
+    # over the active_amp/active_phase guess below whenever available -
+    # catches the car drawing *less* than last commanded (e.g. its charge
+    # curve tapering near full), which car_actually_charging's plain yes/no
+    # can't. None if that read is unavailable/unparsable, in which case the
+    # amp/phase guess (gated by car_actually_charging as before) is used
+    # instead - see module docstring.
+    actual_car_draw_w: Optional[float]
     # True while the Auto charge limit feature has *independently*
     # force-stopped the car (SoC reached its limit) - takes priority over
     # everything below, so this feature never fights it or releases go-e
@@ -170,15 +199,21 @@ def evaluate(state: PvDirectInput) -> PvDirectResult:
     # get the *total* available for the car, not just the leftover on top.
     # Only trusted while go-e itself confirms the car is actually charging
     # (see module docstring) - otherwise treated as 0, whatever we last
-    # requested.
-    assumed_car_draw_w = (
-        state.active_amp * state.active_phase * VOLTAGE_V
-        if state.charging_active
-        and state.active_amp
-        and state.active_phase
-        and state.car_actually_charging is not False
-        else 0.0
-    )
+    # requested. Prefer go-e's own live measured power (actual_car_draw_w)
+    # over the amp*phase guess whenever it's available - it reflects the
+    # car's *real* draw (e.g. a tapering charge curve near full), not just
+    # what we last commanded (see module docstring's third gap).
+    if state.charging_active and state.actual_car_draw_w is not None:
+        assumed_car_draw_w = max(0.0, state.actual_car_draw_w)
+    else:
+        assumed_car_draw_w = (
+            state.active_amp * state.active_phase * VOLTAGE_V
+            if state.charging_active
+            and state.active_amp
+            and state.active_phase
+            and state.car_actually_charging is not False
+            else 0.0
+        )
     available_power_w = export_w + assumed_car_draw_w
 
     min_amp = MIN_AMP

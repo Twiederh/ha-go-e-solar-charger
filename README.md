@@ -199,9 +199,11 @@ eine der beiden steuert den Charger tatsaechlich, umschaltbar per:
   den go-e geschickte Vorgabe), sowie `auto_laedt_wirklich` (`True`/`False`/
   `None` - ob go-e's eigener Ladezustand die Annahme "Auto laedt gerade mit
   dem zuletzt vorgegebenen Strom" bestaetigt, widerlegt oder gerade nicht
-  pruefbar ist) und `gelesener_goe_ladezustand` (der zugrunde liegende
+  pruefbar ist), `gelesener_goe_ladezustand` (der zugrunde liegende
   go-e-`car`-Rohwert: 0 Unbekannt, 1 Idle, 2 Laedt, 3 Wartet auf Auto,
-  4 Fertig, 5 Fehler - siehe "Funktionsweise" unten).
+  4 Fertig, 5 Fehler - siehe "Funktionsweise" unten) und
+  `echte_ladeleistung_w` (go-e's live gemessene Ladeleistung in Watt,
+  `None` falls gerade nicht abrufbar - siehe Bugfix v0.8.5 unten).
 - `button.<name>_direkte_steuerung_jetzt_anwenden` - wendet die aktuelle
   Entscheidung sofort erneut an, praktisch zum Testen der go-e-Verbindung.
 
@@ -445,6 +447,33 @@ gesendet. Anders als beim `frc=On`-Fix oben nicht nur einmalig, sondern
 alle 15 Sekunden erneut, solange die Diskrepanz bestehen bleibt - ein
 uebersehener Stop kostet aktiv Geld, ein wiederholtes `frc=Off` ist ein
 einfacher, risikoarmer Befehl (anders als `psm`).
+
+**Bugfix (v0.8.5) - Ladung pausiert kurz und laedt danach mit deutlich
+mehr als der reale Ueberschuss hergibt:** in der Praxis beobachtet bei
+5,6 kW Solarleistung und 1,8 kW Hausverbrauch (also ~3,8 kW echtem
+Ueberschuss): der Statustext zeigte "Laedt direkt: 13 A / 3-phasig
+(Ueberschuss 9124 W)" - weit mehr, als die PV-Anlage zu diesem Zeitpunkt
+hergeben konnte. Ursache ist eine dritte Luecke in derselben "angenommene
+Ladeleistung"-Rueckkopplung wie bei den Fixes oben: die zuletzt an den
+go-e gesendete Ampere-/Phasenvorgabe wird so lange als tatsaechlich
+fliessend angenommen, wie go-e bestaetigt, dass ueberhaupt geladen wird -
+laedt das Auto aber (z. B. durch die eigene, mit steigendem Akkustand
+flacher werdende Ladekurve nahe voll) tatsaechlich mit *weniger* als
+zuletzt vorgegeben, kann eine reine Ja/Nein-Abfrage ("laedt gerade?") das
+gar nicht erkennen - nur eine echte Leistungsmessung kann das. Diese
+Funktion nutzt daher jetzt, wann immer verfuegbar, go-es eigene live
+gemessene Ladeleistung (`nrg`-Statusfeld, Index 11) anstelle der reinen
+Ampere-mal-Phasen-Rechnung - dieser konkrete Index wurde nicht einfach aus
+der (bei go-e fuer `nrg` unzuverlaessigen, siehe oben) Dokumentation
+uebernommen, sondern anhand echter Status-Abfragen dieser Installation
+gegengeprueft: er entsprach in jedem gesehenen Fall exakt der Summe der
+drei Phasenleistungen (Indizes 7-9), was eine deutlich verlaesslichere
+Grundlage ist als der reine Feldname. Ist die Live-Messung gerade nicht
+verfuegbar (Netzwerk-Hakler, Feld fehlt/unlesbar), faellt die Funktion
+automatisch auf die bisherige Ampere-mal-Phasen-Annahme zurueck, statt die
+Ladung deswegen faelschlich zu drosseln oder zu stoppen. Der gemessene
+Wert ist jetzt auch als neues Sensor-Attribut `echte_ladeleistung_w`
+sichtbar (siehe "Erzeugte Entities" oben).
 
 ### Guenstigstrom-Laden
 

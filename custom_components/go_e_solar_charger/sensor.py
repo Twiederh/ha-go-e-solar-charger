@@ -182,6 +182,7 @@ class PvDirectStatusSensor(SensorEntity):
             "ziel_phasen": computed.get("target_phase"),
             "auto_laedt_wirklich": computed.get("car_actually_charging"),
             "gelesener_goe_ladezustand": computed.get("goe_car_state"),
+            "echte_ladeleistung_w": computed.get("actual_car_draw_w"),
         }
 
     async def async_added_to_hass(self) -> None:
