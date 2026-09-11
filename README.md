@@ -419,18 +419,13 @@ einer reinen Ampere-Anpassung - nebenbei auch schonender fuer das
 Umschaltrelais selbst, das nur eine begrenzte Anzahl Schaltzyklen
 vertraegt.
 
-Hinweis aus der Praxis, nicht abschliessend geklaert: manche go-e-Geraete
-haben zusaetzlich eigene "Lademodi" (Eco/Basic/Tagesausflug, ueber "Mode"
-in der go-e-App waehlbar) mit einer aehnlichen Bestaetigungs-Anzeige.
-Zugriffskontrolle auf "Frei" und kein aktiver Zeitplan/Ladeplan am go-e
-reichten in einem beobachteten Fall allein nicht aus, um das obige
-Problem zu erklaeren - der eigentliche Ausloeser war der wiederholte
-`psm`-Befehl. Falls trotz dieses Fixes weiterhin nicht geladen wird, bleibt
-trotzdem ein Blick in die go-e-App auf einen aktiven Lademodus oder
-Zeitplan sinnvoll, und ein kurzer Test, ob Laden ueber go-es eigene
-Logik (Modus "Werte senden") ueberhaupt funktioniert - das grenzt ein,
-ob das Problem an den von dieser Integration gesendeten Befehlen liegt
-oder unabhaengig davon am Ladegeraet/Fahrzeug selbst.
+Bestaetigt in der Praxis nach dem Update auf v0.8.3: eine bereits vor dem
+Fix haengengebliebene Ladung mit wiederholter go-e-App-Bestaetigung
+("Tippe auf weiter, um mit dem Eco-/Basic-Modus fortzufahren") brauchte
+noch ein einmaliges manuelles Umschalten in der App, um sich zu loesen -
+seitdem startet "Direkte Steuerung" zuverlaessig von selbst, ganz ohne
+weiteres manuelles Eingreifen. Zugriffskontrolle ("Frei") und ein
+Zeitplan/Ladeplan am go-e waren in diesem Fall nicht die Ursache.
 
 ### Guenstigstrom-Laden
 
