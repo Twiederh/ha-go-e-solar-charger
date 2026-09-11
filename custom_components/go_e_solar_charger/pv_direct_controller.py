@@ -320,9 +320,24 @@ class PvDirectController:
             elif action == ACTION_STOP:
                 await self._goe.stop_charging()
             elif action in (ACTION_START, ACTION_UPDATE):
-                await self._goe.set_phase_mode(
-                    PSM_FORCE_3_PHASE if target_phase == 3 else PSM_FORCE_1_PHASE
-                )
+                # Reported in practice: charging via go-e's own logic starts
+                # immediately, but via this feature it never actually gets
+                # going despite go-e accepting every individual command -
+                # while every amp-only ACTION_UPDATE (i.e. most evaluations,
+                # since export power fluctuates constantly) used to resend
+                # "psm" too, even completely unchanged. If go-e treats any
+                # psm write as a manual override that re-arms its own
+                # app-side mode-confirmation gate, that would both explain
+                # the repeatedly reappearing "tap to continue" prompt AND
+                # mean charging could never survive past the next
+                # evaluation. Now only sent on an actual start, or when the
+                # phase count is actually changing - never on a bare amp
+                # adjustment. Also kinder to the phase-switch relay itself,
+                # which is physical hardware with a limited switching life.
+                if action == ACTION_START or target_phase != self._active_phase:
+                    await self._goe.set_phase_mode(
+                        PSM_FORCE_3_PHASE if target_phase == 3 else PSM_FORCE_1_PHASE
+                    )
                 await self._goe.set_amp(int(target_amp))
                 if action == ACTION_START or reassert_frc:
                     await self._goe.force_charging_on()

@@ -24,6 +24,7 @@ from custom_components.go_e_solar_charger.const import (
     CHEAP_PRIORITY_TESLA_FIRST,
     DOMAIN,
     PSM_AUTO,
+    PSM_FORCE_1_PHASE,
     PSM_FORCE_3_PHASE,
     PV_PUSH_KEEPALIVE_INTERVAL_SECONDS,
 )
@@ -1551,3 +1552,102 @@ async def test_pv_direct_corrects_surplus_once_goe_confirms_not_charging(
         )
         await hass.async_block_till_done()
         assert mock_on.call_count == 3
+
+
+@pytest.mark.asyncio
+async def test_pv_direct_does_not_resend_psm_on_a_bare_amp_update(
+    hass, enable_custom_integrations
+):
+    """Reported in practice: charging via go-e's own logic starts right
+    away, but via this feature it never actually settles into charging,
+    even though every individual go-e command is accepted. Before this
+    fix, "psm" was resent on *every* update, including a bare amp change
+    with no phase switch at all - the working theory is that go-e treats
+    any psm write as a manual mode override and re-arms its own app-side
+    "tap to continue" confirmation, which would explain both the repeated
+    prompts and why a charge could never survive past the next
+    evaluation. "psm" must now only be sent on an actual start, or when
+    the phase count is actually changing - never on a bare amp
+    adjustment (also kinder to the physical phase-switch relay)."""
+    hass.states.async_set(ZOE_SOC_ENTITY, "50")
+    hass.states.async_set(ZOE_CHARGING_ENTITY, "off")
+    hass.states.async_set(ZOE_CONNECTED_ENTITY, "off")
+
+    hass.states.async_set(PV_SOC_ENTITY, "70")
+    hass.states.async_set(PV_SOLAR_ENTITY, "6000")
+    hass.states.async_set(PV_GRID_ENTITY, "-6000")  # starts on 3 phases
+    hass.states.async_set(PV_BATTERY_ENTITY, "0")
+
+    with patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.stop_charging",
+        new=AsyncMock(),
+    ), patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.release",
+        new=AsyncMock(),
+    ), patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.push_pv_values",
+        new=AsyncMock(),
+    ), patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.force_charging_on",
+        new=AsyncMock(),
+    ), patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.set_amp",
+        new=AsyncMock(),
+    ) as mock_amp, patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.set_phase_mode",
+        new=AsyncMock(),
+    ) as mock_psm, patch(
+        "custom_components.go_e_solar_charger.pv_controller.PvSurplusController._set_goe_pv_switch",
+        new=AsyncMock(),
+    ), patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.get_car_state",
+        new=AsyncMock(return_value=None),
+    ):
+        entry = await _make_entry(hass)
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+        await hass.services.async_call(
+            "select",
+            "select_option",
+            {
+                "entity_id": f"select.{DEVICE_SLUG}_pv_steuerungsmodus",
+                "option": "Direkte Steuerung (Ampere/Phase)",
+            },
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+        # Initial start: psm IS sent (3-phase), amp = 9 A.
+        assert mock_psm.call_count == 1
+        assert mock_psm.call_args.args[0] == PSM_FORCE_3_PHASE
+        assert mock_amp.call_args.args[0] == 9
+
+        # Export rises a bit, still comfortably on 3 phases - only the amp
+        # target changes (9 A -> 10 A), the phase stays the same. Note the
+        # "assumed car draw" feedback (see pv_direct_logic.py): available
+        # power = export + the 9 A/3-phase already assumed to be flowing
+        # (6210 W), so -690 W of further export (690 + 6210 = 6900 W,
+        # exactly 10 A) gets there without a huge swing.
+        psm_calls_after_start = mock_psm.call_count
+        hass.states.async_set(PV_GRID_ENTITY, "-690")
+        await hass.async_block_till_done()
+        assert mock_amp.call_args.args[0] == 10
+        assert mock_psm.call_count == psm_calls_after_start  # NOT resent
+
+        # Export drops enough (here: briefly net-importing, on top of the
+        # assumed 10 A/3-phase = 6900 W) to actually cross back down to 1
+        # phase - this time psm legitimately needs to be (and is) resent.
+        hass.states.async_set(PV_GRID_ENTITY, "3200")
+        await hass.async_block_till_done()
+        assert mock_psm.call_count == psm_calls_after_start + 1
+        assert mock_psm.call_args.args[0] == PSM_FORCE_1_PHASE
+        assert mock_amp.call_args.args[0] == 16
+
+        # Another bare amp-only change while staying on 1 phase (assumed
+        # 16 A/1-phase = 3680 W now) - again must not resend psm.
+        psm_calls_after_switch = mock_psm.call_count
+        hass.states.async_set(PV_GRID_ENTITY, "920")
+        await hass.async_block_till_done()
+        assert mock_amp.call_args.args[0] == 12
+        assert mock_psm.call_count == psm_calls_after_switch

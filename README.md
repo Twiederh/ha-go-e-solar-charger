@@ -402,14 +402,35 @@ danach erneut. Der Statustext macht diese Diskrepanz jetzt auch sichtbar
 ("... - Auto laedt laut go-e-Status nicht, sende Startbefehl erneut"),
 statt unveraendert "Laedt direkt" zu behaupten.
 
-Hinweis aus der Praxis, unabhaengig von obigem Fix: manche go-e-Geraete
+**Bugfix (v0.8.3) - Ladung startet trotz allem nicht/bricht sofort wieder
+ab:** ebenfalls in der Praxis beobachtet, nachdem obige beiden Fixes fuer
+sich allein noch nicht reichten: `psm` (Phasenumschaltung) wurde bis dahin
+bei *jeder* Anwendung neu gesendet, auch bei einer reinen
+Ampere-Anpassung ganz ohne Phasenwechsel - also bei praktisch jeder
+Auswertung, da sich die Einspeiseleistung staendig etwas aendert. Alles
+deutet darauf hin, dass go-e jeden `psm`-Befehl als manuellen Eingriff
+wertet und dabei die App-seitige Lademodus-Bestaetigung ("Tippe auf
+weiter, um mit dem Eco-/Basic-Modus fortzufahren") neu scharf schaltet -
+worauf hin nie eine Ladung ueber eine einzelne Auswertung hinaus
+ueberleben konnte, obwohl go-e steuerte Ladung ueber die App selbst sofort
+normal funktionierte. `psm` wird jetzt nur noch beim allerersten Start
+sowie bei einer tatsaechlichen Phasenumschaltung gesendet, nie mehr bei
+einer reinen Ampere-Anpassung - nebenbei auch schonender fuer das
+Umschaltrelais selbst, das nur eine begrenzte Anzahl Schaltzyklen
+vertraegt.
+
+Hinweis aus der Praxis, nicht abschliessend geklaert: manche go-e-Geraete
 haben zusaetzlich eigene "Lademodi" (Eco/Basic/Tagesausflug, ueber "Mode"
-in der go-e-App waehlbar) - steht dort kein Modus fest ausgewaehlt
-("Tippe auf weiter, um mit dem Eco-Modus fortzufahren"), kann das
-Ladegeraet unabhaengig von `frc`/`amp`/`psm` auf eine Bestaetigung in der
-App warten. Falls trotz dieses Fixes weiterhin nicht geladen wird, lohnt
-sich zusaetzlich ein Blick in die go-e-App, ob dort ein Lademodus aktiv
-ist.
+in der go-e-App waehlbar) mit einer aehnlichen Bestaetigungs-Anzeige.
+Zugriffskontrolle auf "Frei" und kein aktiver Zeitplan/Ladeplan am go-e
+reichten in einem beobachteten Fall allein nicht aus, um das obige
+Problem zu erklaeren - der eigentliche Ausloeser war der wiederholte
+`psm`-Befehl. Falls trotz dieses Fixes weiterhin nicht geladen wird, bleibt
+trotzdem ein Blick in die go-e-App auf einen aktiven Lademodus oder
+Zeitplan sinnvoll, und ein kurzer Test, ob Laden ueber go-es eigene
+Logik (Modus "Werte senden") ueberhaupt funktioniert - das grenzt ein,
+ob das Problem an den von dieser Integration gesendeten Befehlen liegt
+oder unabhaengig davon am Ladegeraet/Fahrzeug selbst.
 
 ### Guenstigstrom-Laden
 
