@@ -17,6 +17,7 @@ from pytest_homeassistant_custom_component.common import (
 from homeassistant.util import dt as dt_util
 
 from custom_components.go_e_solar_charger.const import (
+    CAR_STATE_COMPLETE,
     CHEAP_FORECAST_EVAL_HOUR,
     CHEAP_FORECAST_EVAL_MINUTE,
     CHEAP_PRIORITY_AUTO_FIRST,
@@ -1412,3 +1413,141 @@ async def test_cheap_exit_does_not_reenable_goe_pv_switch_in_direct_mode(
         # And direct control actually resumed (rather than staying stuck
         # "Pausiert" from the suppression that just ended).
         assert "Laedt direkt" in _state(hass, f"sensor.{DEVICE_SLUG}_pv_direktsteuerung_status")
+
+
+@pytest.mark.asyncio
+async def test_pv_direct_corrects_surplus_once_goe_confirms_not_charging(
+    hass, enable_custom_integrations
+):
+    """Reported in practice: after go-e stops actually drawing current for
+    any reason the integration didn't request (finished, unplugged, or the
+    amp/psm commands simply not landing), the "assumed car draw" feedback
+    kept adding the old (now bogus) commanded power into the computed
+    surplus forever, showing an impossibly large number and pushing the
+    amp setting further up instead of correcting it."""
+    hass.states.async_set(ZOE_SOC_ENTITY, "50")
+    hass.states.async_set(ZOE_CHARGING_ENTITY, "off")
+    hass.states.async_set(ZOE_CONNECTED_ENTITY, "off")
+
+    hass.states.async_set(PV_SOC_ENTITY, "70")
+    hass.states.async_set(PV_SOLAR_ENTITY, "6000")
+    hass.states.async_set(PV_GRID_ENTITY, "-6000")  # exporting 6000 W, unchanged throughout
+    hass.states.async_set(PV_BATTERY_ENTITY, "0")
+
+    with patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.stop_charging",
+        new=AsyncMock(),
+    ), patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.release",
+        new=AsyncMock(),
+    ), patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.push_pv_values",
+        new=AsyncMock(),
+    ), patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.force_charging_on",
+        new=AsyncMock(),
+    ) as mock_on, patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.set_amp",
+        new=AsyncMock(),
+    ) as mock_amp, patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.set_phase_mode",
+        new=AsyncMock(),
+    ), patch(
+        "custom_components.go_e_solar_charger.pv_controller.PvSurplusController._set_goe_pv_switch",
+        new=AsyncMock(),
+    ), patch(
+        "custom_components.go_e_solar_charger.goe_client.GoEClient.get_car_state",
+        new=AsyncMock(return_value=None),
+    ) as mock_car_state:
+        entry = await _make_entry(hass)
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+        await hass.services.async_call(
+            "select",
+            "select_option",
+            {
+                "entity_id": f"select.{DEVICE_SLUG}_pv_steuerungsmodus",
+                "option": "Direkte Steuerung (Ampere/Phase)",
+            },
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+        status_entity = f"sensor.{DEVICE_SLUG}_pv_direktsteuerung_status"
+        # Not charging yet at this exact instant of switching on, so no
+        # status read was needed/attempted for the very first start.
+        assert mock_car_state.call_count == 0
+        # 6000 W / (3 * 230 V) = 8.7 A, rounded to 9 A.
+        assert mock_amp.call_args.args[0] == 9
+        assert hass.states.get(status_entity).attributes["berechneter_ueberschuss_w"] == 6000.0
+        assert mock_on.call_count == 1  # the initial ACTION_START
+
+        button_entity = f"button.{DEVICE_SLUG}_direkte_steuerung_jetzt_anwenden"
+
+        # go-e confirms the car is actually charging - the assumed 9 A / 3-
+        # phase (6210 W) is added back on top of the unchanged 6000 W
+        # export, same as before the fix (this is the intended feedback
+        # behaviour when the assumption is confirmed correct).
+        mock_car_state.return_value = 2  # CAR_STATE_CHARGING
+        await hass.services.async_call(
+            "button", "press", {"entity_id": button_entity}, blocking=True
+        )
+        await hass.async_block_till_done()
+        assert mock_car_state.call_count == 1
+        attrs = hass.states.get(status_entity).attributes
+        assert attrs["berechneter_ueberschuss_w"] == 6000.0 + 9 * 3 * 230
+        assert attrs["auto_laedt_wirklich"] is True
+        assert mock_on.call_count == 1  # confirmed fine - no need to re-send frc=On
+
+        # go-e now confirms the car is NOT actually charging (e.g.
+        # finished) - the assumed draw must drop out entirely, correcting
+        # the surplus back down to the real 6000 W rather than continuing
+        # to inflate it, and the amp is NOT bumped up to the (bogus) max.
+        # Also reported in practice: with this same fix, the status text
+        # up to now still just kept saying "Laedt direkt" while go-e's own
+        # frc had e.g. silently reverted, so nothing was actually flowing -
+        # this must both surface that mismatch in the status text AND
+        # re-send frc=On once to try to actually recover the charge.
+        mock_car_state.return_value = CAR_STATE_COMPLETE
+        await hass.services.async_call(
+            "button", "press", {"entity_id": button_entity}, blocking=True
+        )
+        await hass.async_block_till_done()
+        attrs = hass.states.get(status_entity).attributes
+        assert attrs["berechneter_ueberschuss_w"] == 6000.0
+        assert attrs["auto_laedt_wirklich"] is False
+        assert attrs["gelesener_goe_ladezustand"] == CAR_STATE_COMPLETE
+        assert mock_amp.call_args.args[0] != 16
+        status_text = _state(hass, status_entity)
+        assert "Laedt direkt: 9 A" in status_text
+        assert "Auto laedt laut go-e-Status nicht" in status_text
+        assert mock_on.call_count == 2  # frc=On re-sent once to try to recover
+
+        # Pressing again while go-e still reports the car as not actually
+        # charging must NOT keep re-sending frc=On on every single
+        # evaluation - a genuinely unplugged/broken car would otherwise be
+        # spammed with "start" commands forever. Only the much slower
+        # periodic PV_DIRECT_REASSERT_INTERVAL_SECONDS timer retries again
+        # after that (not exercised here).
+        await hass.services.async_call(
+            "button", "press", {"entity_id": button_entity}, blocking=True
+        )
+        await hass.async_block_till_done()
+        assert mock_on.call_count == 2
+
+        # Once go-e confirms charging resumed, the "already retried" guard
+        # resets - so a *later*, separate stall gets its own fresh retry.
+        mock_car_state.return_value = 2  # CAR_STATE_CHARGING
+        await hass.services.async_call(
+            "button", "press", {"entity_id": button_entity}, blocking=True
+        )
+        await hass.async_block_till_done()
+        assert mock_on.call_count == 2
+
+        mock_car_state.return_value = CAR_STATE_COMPLETE
+        await hass.services.async_call(
+            "button", "press", {"entity_id": button_entity}, blocking=True
+        )
+        await hass.async_block_till_done()
+        assert mock_on.call_count == 3

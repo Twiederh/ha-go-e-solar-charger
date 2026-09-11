@@ -98,6 +98,19 @@ PSM_AUTO = 0
 PSM_FORCE_1_PHASE = 1
 PSM_FORCE_3_PHASE = 2
 
+# go-e local API v2 "car" (carState) values - unlike psm/nrg above, this
+# enum is consistently documented across independent sources, so it's used
+# to sanity-check the "assumed car draw" feedback in pv_direct_logic.py
+# (see its module docstring): only CAR_STATE_CHARGING means current is
+# actually flowing - Idle/WaitCar/Complete/Error/Unknown all mean it
+# isn't, regardless of what amp/frc this feature last requested.
+CAR_STATE_UNKNOWN = 0
+CAR_STATE_IDLE = 1
+CAR_STATE_CHARGING = 2
+CAR_STATE_WAIT_CAR = 3
+CAR_STATE_COMPLETE = 4
+CAR_STATE_ERROR = 5
+
 # --- Tesla charge gating feature (plain on/off switch, gated by the same
 # Powerwall SoC/grid sensors already configured for the PV-surplus push
 # feature above, reusing its *live* threshold - with its own, lower,

@@ -32,6 +32,7 @@ from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_track_state_change_event, async_track_time_interval
 
 from .const import (
+    CAR_STATE_CHARGING,
     CONF_GOE_API_KEY,
     CONF_GOE_HOST,
     CONF_PV_BATTERY_ENTITY,
@@ -106,6 +107,17 @@ class PvDirectController:
         # PvSurplusController's last_read_values/last_pushed_values.
         self.last_read_values: dict = {}
         self.last_computed_values: dict = {}
+        # Raw go-e "car" (carState) value behind the car_actually_charging
+        # sanity check above - None while not charging (never read) or on
+        # a failed read, otherwise const.py's CAR_STATE_* integer.
+        self.last_car_state: Optional[int] = None
+        # Edge-triggered guard for the frc re-assert below: True once we've
+        # already re-sent frc=On for the *current* confirmed-not-charging
+        # stretch, so a stuck car (e.g. genuinely unplugged) gets one
+        # immediate retry rather than a fresh "frc=On" on every single
+        # evaluation - reset back to False as soon as go-e stops confirming
+        # "not charging" (goes back to True, or to unknown/None).
+        self._frc_reasserted_for_stall: bool = False
 
         self._unsub_track = None
         self._unsub_interval = None
@@ -160,6 +172,22 @@ class PvDirectController:
         except (TypeError, ValueError):
             return None
 
+    async def _read_car_actually_charging(self) -> Optional[bool]:
+        """None on any read failure - treated by pv_direct_logic.py as
+        "unknown, keep trusting the assumption" rather than "confirmed not
+        charging", so a transient go-e/network hiccup can't interrupt an
+        otherwise-fine charge."""
+        try:
+            car_state = await self._goe.get_car_state()
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.debug("Konnte go-e-Ladezustand nicht lesen: %s", exc)
+            self.last_car_state = None
+            return None
+        self.last_car_state = car_state
+        if car_state is None:
+            return None
+        return car_state == CAR_STATE_CHARGING
+
     async def async_evaluate(self) -> None:
         self.last_read_values = {
             "solar_w": self._read_float(self._solar_entity),
@@ -190,6 +218,15 @@ class PvDirectController:
             self._zoe_controller.force_off_active if self._zoe_controller is not None else False
         )
 
+        # Only relevant (and only fetched) while we actually believe we're
+        # driving a charge - see pv_direct_logic.py's module docstring for
+        # why this matters: without it, a car that stopped drawing current
+        # for any reason we didn't request would have its last-requested
+        # amp/phase phantom-added into the surplus forever.
+        car_actually_charging = None
+        if self._charging_active:
+            car_actually_charging = await self._read_car_actually_charging()
+
         result = evaluate(
             PvDirectInput(
                 enabled=self._pv.enabled,
@@ -203,11 +240,13 @@ class PvDirectController:
                 charging_active=self._charging_active,
                 active_amp=self._active_amp,
                 active_phase=self._active_phase,
+                car_actually_charging=car_actually_charging,
                 zoe_force_off_active=zoe_force_off,
                 phase_switch_hysteresis_w=PV_DIRECT_PHASE_SWITCH_HYSTERESIS_W,
             )
         )
 
+        reassert_frc = False
         if (
             result.action is None
             and result.charging_active
@@ -215,25 +254,65 @@ class PvDirectController:
             and self._last_applied_at is not None
             and (time.monotonic() - self._last_applied_at) >= PV_DIRECT_REASSERT_INTERVAL_SECONDS
         ):
-            # Re-apply the same amp/phase defensively, in case a manual
+            # Re-apply the same amp/phase/frc defensively, in case a manual
             # override at the charger (or the car being unplugged and
             # reconnected) silently changed go-e's actual state without
             # our knowledge - see the module docstring / const.py's
-            # PV_DIRECT_REASSERT_INTERVAL_SECONDS.
+            # PV_DIRECT_REASSERT_INTERVAL_SECONDS. Also re-sends frc=On,
+            # not just amp/psm (see below for why that matters).
             result = replace(
                 result, action=ACTION_UPDATE, target_amp=self._active_amp, target_phase=self._active_phase
             )
+            reassert_frc = True
+
+        # Reported in practice: go-e's "frc" can apparently revert on its
+        # own (a plug/unplug cycle, an internal error, ...) without our
+        # tracked amp/phase changing at all - and ACTION_UPDATE (unlike
+        # ACTION_START) never re-sends frc=On below, so a surplus kept
+        # being computed and shown in the status text while the car never
+        # actually resumed charging. Once go-e's own carState confirms
+        # that, force one immediate frc=On re-send alongside whatever
+        # amp/phase evaluate() has just computed - edge-triggered (only
+        # once per confirmed-not-charging stretch) so a car that's
+        # genuinely not going to charge (unplugged, real error) doesn't
+        # get spammed with frc=On on every single evaluation; the periodic
+        # re-assert above still retries roughly every
+        # PV_DIRECT_REASSERT_INTERVAL_SECONDS after that.
+        attempt_stall_reassert = False
+        if car_actually_charging is False and not self._frc_reasserted_for_stall:
+            if result.action is None and result.charging_active:
+                result = replace(result, action=ACTION_UPDATE)
+            reassert_frc = True
+            attempt_stall_reassert = True
+        elif car_actually_charging is not False:
+            self._frc_reasserted_for_stall = False
 
         self.last_computed_values = {
             "available_power_w": result.available_power_w,
             "target_amp": result.target_amp,
             "target_phase": result.target_phase,
+            "car_actually_charging": car_actually_charging,
+            "goe_car_state": self.last_car_state,
         }
-        await self._apply(result.action, result.status_text, result.target_amp, result.target_phase)
+        applied_ok = await self._apply(
+            result.action, result.status_text, result.target_amp, result.target_phase, reassert_frc
+        )
+        if attempt_stall_reassert and applied_ok:
+            # Only latch the "already retried" guard once the frc=On
+            # re-send actually went through - on a failed attempt (go-e
+            # unreachable, rejected the command, ...) the next evaluation
+            # should try again rather than silently giving up on the first
+            # network hiccup.
+            self._frc_reasserted_for_stall = True
 
     async def _apply(
-        self, action: Optional[str], status_text: str, target_amp, target_phase
-    ) -> None:
+        self,
+        action: Optional[str],
+        status_text: str,
+        target_amp,
+        target_phase,
+        reassert_frc: bool = False,
+    ) -> bool:
         try:
             if action == ACTION_RELEASE:
                 await self._goe.release()
@@ -245,7 +324,7 @@ class PvDirectController:
                     PSM_FORCE_3_PHASE if target_phase == 3 else PSM_FORCE_1_PHASE
                 )
                 await self._goe.set_amp(int(target_amp))
-                if action == ACTION_START:
+                if action == ACTION_START or reassert_frc:
                     await self._goe.force_charging_on()
         except Exception as exc:  # noqa: BLE001
             _LOGGER.warning("Direkte Ladesteuerung: Befehl an go-e fehlgeschlagen: %s", exc)
@@ -254,7 +333,7 @@ class PvDirectController:
             # Deliberately leave _charging_active/_active_amp/_active_phase
             # untouched so the next evaluation retries applying `action`,
             # rather than silently believing the change already happened.
-            return
+            return False
 
         if action in (ACTION_START, ACTION_UPDATE):
             self._charging_active = True
@@ -267,11 +346,18 @@ class PvDirectController:
 
         if action is not None:
             self._last_applied_at = time.monotonic()
-            if self._on_frc_changed and action in (ACTION_RELEASE, ACTION_STOP, ACTION_START):
+            # reassert_frc also re-sends frc=On via an ACTION_UPDATE (see
+            # above) - that's just as frc-affecting as a fresh ACTION_START,
+            # so the Auto charge limit feature must get the same chance to
+            # immediately re-assert its own stop on top of it.
+            if self._on_frc_changed and (
+                reassert_frc or action in (ACTION_RELEASE, ACTION_STOP, ACTION_START)
+            ):
                 await self._on_frc_changed()
 
         self.status_text = status_text
         async_dispatcher_send(self.hass, self.signal)
+        return True
 
     async def async_set_max_amp(self, value: float) -> None:
         self.max_amp = value

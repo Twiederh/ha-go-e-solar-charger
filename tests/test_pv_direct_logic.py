@@ -31,6 +31,7 @@ def _base(**overrides) -> PvDirectInput:
         charging_active=False,
         active_amp=None,
         active_phase=None,
+        car_actually_charging=True,
         zoe_force_off_active=False,
         phase_switch_hysteresis_w=HYSTERESIS,
     )
@@ -181,5 +182,47 @@ def test_assumed_car_draw_is_added_back_to_export_for_available_power():
     # the *total* available for the car is 1380 + 500 = 1880 W, not 500 W.
     result = evaluate(
         _base(grid_w=-500.0, charging_active=True, active_amp=6, active_phase=1)
+    )
+    assert result.available_power_w == 1880
+
+
+def test_confirmed_not_charging_drops_the_assumed_draw():
+    # Reported in practice: believing 16 A / 3-phase = 11040 W is flowing
+    # while go-e confirms the car actually isn't (finished, unplugged, or
+    # the amp/psm commands never landed) must NOT keep inflating the
+    # surplus by that phantom amount forever - it should fall back to the
+    # real 7400 W of export, and re-target the amp/phase to match that
+    # instead of staying pinned at the old (bogus) 16 A / 3-phase.
+    result = evaluate(
+        _base(
+            grid_w=-7400.0,
+            charging_active=True,
+            active_amp=16,
+            active_phase=3,
+            car_actually_charging=False,
+        )
+    )
+    assert result.available_power_w == 7400
+    assert result.action == ACTION_UPDATE
+    assert result.target_amp == round(7400 / (3 * 230))
+    assert result.target_phase == 3
+    # Surfaced explicitly rather than silently repeating "Laedt direkt" as
+    # if everything were fine - see pv_direct_controller.py for the
+    # accompanying frc=On re-send this is meant to explain.
+    assert "Auto laedt laut go-e-Status nicht" in result.status_text
+
+
+def test_unknown_charging_state_still_trusts_the_assumption():
+    # A failed/unavailable status read (car_actually_charging=None) must
+    # not by itself interrupt an otherwise-normal charge - only a
+    # *confirmed* False should reset the assumed draw.
+    result = evaluate(
+        _base(
+            grid_w=-500.0,
+            charging_active=True,
+            active_amp=6,
+            active_phase=1,
+            car_actually_charging=None,
+        )
     )
     assert result.available_power_w == 1880

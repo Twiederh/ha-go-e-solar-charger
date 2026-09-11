@@ -9,6 +9,7 @@ PV-surplus-charging input) - one GET request setting all three at once.
 """
 import json
 import logging
+from typing import Optional
 
 import aiohttp
 
@@ -74,3 +75,24 @@ class GoEClient:
         ) as response:
             response.raise_for_status()
             await response.json(content_type=None)
+
+    async def get_car_state(self) -> Optional[int]:
+        """Reads go-e's "car" (carState) status field - see const.py's
+        CAR_STATE_* constants. Used only to sanity-check the direct-control
+        feature's own "is the car actually drawing what I last requested"
+        assumption (see pv_direct_logic.py's module docstring): unlike
+        psm/nrg, this field is consistently documented across independent
+        go-e API sources, so it's read despite this integration otherwise
+        avoiding go-e's status API. Returns None if the field is missing or
+        unparsable, rather than raising - callers treat that as "unknown",
+        not "confirmed not charging"."""
+        url = f"http://{self._host}/api/status"
+        async with self._session.get(
+            url, headers=self._headers(), timeout=TIMEOUT
+        ) as response:
+            response.raise_for_status()
+            body = await response.json(content_type=None)
+        try:
+            return int(body.get("car"))
+        except (TypeError, ValueError):
+            return None

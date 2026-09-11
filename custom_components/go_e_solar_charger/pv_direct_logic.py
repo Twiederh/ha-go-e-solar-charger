@@ -28,10 +28,37 @@ car's current draw while charging, rather than reading it back from go-e -
 one fewer unverified API dependency, at the cost of not reacting to the
 car temporarily drawing less than requested.
 
+That "assumed draw" is exactly what it says: what we last *requested*,
+not what the car is actually pulling. If the car has stopped drawing
+current for any reason we didn't request (finished charging, paused
+itself, unplugged, or the amp/psm commands simply not landing) while we
+still believe charging_active is True, the assumed draw keeps getting
+added straight into available_power_w every cycle - wildly overstating
+the real surplus (observed in practice: 16 A/3-phase assumed = 11040 W,
+plus 7400 W of real export, showing as "18521 W available" while the
+house was only ever seeing ~7.4 kW leave). To catch that, this feature
+also reads back go-e's "car" (carState) field - unlike psm/nrg, that one
+enum IS consistently documented - and zeroes the assumed draw out
+whenever it confirms the car is NOT actually charging (car_actually_
+charging is False below), while still trusting the assumption when that
+read is unavailable/unknown (None) rather than needlessly interrupting a
+charge over a transient status-read hiccup.
+
 Also defers entirely to the Auto charge limit feature's SoC-based stop
 (zoe_force_off_active below, mirroring ZoeChargeLimitController.
 force_off_active) - this feature must never fight that or re-enable
 charging out from under it.
+
+Also reported in practice, related to the above: go-e's "frc" (force
+charge state) can apparently revert on its own in some situations (a
+plug/unplug cycle, certain internal errors) without this feature having
+any way to notice via its own tracked amp/phase - and until this fix, only
+ACTION_START ever re-sent frc=On; the far more common ACTION_UPDATE (and
+the periodic defensive re-assert) only touched amp/psm, so a surplus kept
+being computed and shown while the car silently never resumed charging.
+pv_direct_controller.py now also re-sends frc=On whenever car_actually_
+charging is confirmed False, on the same footing as its periodic amp/psm
+re-assert (see there for the exact rate-limiting).
 """
 from dataclasses import dataclass
 from typing import Optional
@@ -62,6 +89,12 @@ class PvDirectInput:
     charging_active: bool
     active_amp: Optional[float]
     active_phase: Optional[int]
+    # Sanity check on the "assumed car draw" trick below, read back from
+    # go-e's own "car" (carState) status field - True once confirmed
+    # actually charging, False once confirmed NOT charging (Idle/WaitCar/
+    # Complete/Error/Unknown), None if that read failed/is unavailable
+    # (treated the same as True - see module docstring).
+    car_actually_charging: Optional[bool]
     # True while the Auto charge limit feature has *independently*
     # force-stopped the car (SoC reached its limit) - takes priority over
     # everything below, so this feature never fights it or releases go-e
@@ -135,9 +168,15 @@ def evaluate(state: PvDirectInput) -> PvDirectResult:
     # drawing because of a previous decision by this feature - the export
     # figure above already reflects that draw, so it needs adding back to
     # get the *total* available for the car, not just the leftover on top.
+    # Only trusted while go-e itself confirms the car is actually charging
+    # (see module docstring) - otherwise treated as 0, whatever we last
+    # requested.
     assumed_car_draw_w = (
         state.active_amp * state.active_phase * VOLTAGE_V
-        if state.charging_active and state.active_amp and state.active_phase
+        if state.charging_active
+        and state.active_amp
+        and state.active_phase
+        and state.car_actually_charging is not False
         else 0.0
     )
     available_power_w = export_w + assumed_car_draw_w
@@ -179,9 +218,22 @@ def evaluate(state: PvDirectInput) -> PvDirectResult:
         or target_phase != state.active_phase
     )
     action = (ACTION_UPDATE if state.charging_active else ACTION_START) if changed else None
+
+    # Reported in practice: the status text below is purely a *target*
+    # computed from the current surplus - it says "Laedt direkt" even when
+    # go-e has just confirmed the car isn't actually drawing any current at
+    # all, which reads as "surplus is shown but nothing charges" with no
+    # visible explanation. Once car_actually_charging is confirmed False,
+    # make that mismatch explicit instead of silently repeating the same
+    # "Laedt direkt" text every cycle - pv_direct_controller.py additionally
+    # reacts to this by re-sending the go-e start command (see there).
+    note = ""
+    if state.charging_active and state.car_actually_charging is False:
+        note = " - Auto laedt laut go-e-Status nicht, sende Startbefehl erneut"
+
     return PvDirectResult(
         f"Laedt direkt: {target_amp:.0f} A / {target_phase}-phasig "
-        f"(Ueberschuss {available_power_w:.0f} W)",
+        f"(Ueberschuss {available_power_w:.0f} W){note}",
         action,
         target_amp,
         target_phase,

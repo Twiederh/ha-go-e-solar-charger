@@ -196,7 +196,12 @@ eine der beiden steuert den Charger tatsaechlich, umschaltbar per:
   `gelesen_akku_w`/`gelesen_powerwall_soc`), zusaetzlich
   `berechneter_ueberschuss_w` (die selbst berechnete verfuegbare
   Ueberschussleistung), `ziel_ampere` und `ziel_phasen` (die zuletzt an
-  den go-e geschickte Vorgabe).
+  den go-e geschickte Vorgabe), sowie `auto_laedt_wirklich` (`True`/`False`/
+  `None` - ob go-e's eigener Ladezustand die Annahme "Auto laedt gerade mit
+  dem zuletzt vorgegebenen Strom" bestaetigt, widerlegt oder gerade nicht
+  pruefbar ist) und `gelesener_goe_ladezustand` (der zugrunde liegende
+  go-e-`car`-Rohwert: 0 Unbekannt, 1 Idle, 2 Laedt, 3 Wartet auf Auto,
+  4 Fertig, 5 Fehler - siehe "Funktionsweise" unten).
 - `button.<name>_direkte_steuerung_jetzt_anwenden` - wendet die aktuelle
   Entscheidung sofort erneut an, praktisch zum Testen der go-e-Verbindung.
 
@@ -356,6 +361,55 @@ bevor man sich darauf verlaesst - schlaegt ein Befehl fehl (z. B. weil
 zurueck, statt ihn stillschweigend falsch umzusetzen (siehe
 `goe_client.py`'s `_set()`). Die reine Entscheidungslogik steckt in
 `pv_direct_logic.py`, frei von Home-Assistant-Importen.
+
+**Bugfix (v0.8.2) - falscher/uebertriebener Ueberschuss:** in der Praxis
+beobachtet: die Integration merkt sich den zuletzt vorgegebenen Ladestrom
+selbst und zaehlt ihn zur Netzleistung dazu, um die tatsaechlich
+verfuegbare Gesamtleistung zu berechnen (siehe oben, "abzueglich/
+zuzueglich"-Absatz). Haert das Auto aus irgendeinem Grund auf zu laden, den
+die Integration nicht selbst veranlasst hat (fertig geladen, abgesteckt,
+Ladebefehl kam am Fahrzeug nie an, ...), wurde dieser laengst nicht mehr
+zutreffende Ladestrom trotzdem immer weiter draufgerechnet - der
+angezeigte Ueberschuss wurde beliebig groesser, ohne je wieder zu sinken
+(beobachtet: 16 A/3-phasig angenommen ergab 11 040 W, die zu echten
+7400 W Einspeisung addiert als "18 521 W Ueberschuss" angezeigt wurden,
+obwohl tatsaechlich nur 7,4 kW ins Netz gingen). Behoben, indem zusaetzlich
+go-es eigener Ladezustand (`car`-Feld, siehe `gelesener_goe_ladezustand`
+oben) abgefragt wird, sobald die Integration glaubt zu laden: bestaetigt
+er "laedt nicht" (Idle/Wartet auf Auto/Fertig/Fehler), wird die Annahme
+verworfen und der Ueberschuss auf die echte Einspeisung zurueckgesetzt -
+ein fehlgeschlagener/nicht verfuegbarer Statusabruf allein stoppt dagegen
+nichts (sonst wuerde ein kurzer Netzwerk-Aussetzer eine an sich intakte
+Ladung unterbrechen).
+
+**Bugfix (v0.8.2) - Ueberschuss wird angezeigt, es laedt aber nicht:**
+ebenfalls beobachtet, vermutlich dieselbe Ursache: go-es `frc`
+("Force State") kann sich offenbar von selbst zuruecksetzen (z. B. nach
+Ab-/Wiederanstecken oder einem internen Fehler am Ladegeraet), ohne dass
+sich der von der Integration selbst verfolgte Ladestrom/-phase dabei
+aendert. Bis zu diesem Fix wurde `frc=On` aber nur beim allerersten Start
+gesendet - jede spaetere Anpassung von Ampere/Phase (und auch der
+regelmaessige Sicherheits-Re-Send alle 4 Minuten) hat `frc` nie erneut
+gesetzt, sodass der Statustext weiterhin "Laedt direkt: ..." anzeigte und
+ein plausibler Ueberschuss berechnet wurde, obwohl am Ladegeraet gar
+nichts mehr passierte. Sobald der oben beschriebene Ladezustands-Check
+"laedt nicht" bestaetigt, sendet die Integration jetzt einmalig zusaetzlich
+`frc=On` erneut, um die Ladung tatsaechlich wieder in Gang zu setzen -
+einmalig pro erkannter Unterbrechung, nicht bei jeder Auswertung (sonst
+wuerde ein wirklich abgestecktes Auto dauerhaft mit Startbefehlen
+zugespamt); erst der naechste regelmaessige 4-Minuten-Re-Send versucht es
+danach erneut. Der Statustext macht diese Diskrepanz jetzt auch sichtbar
+("... - Auto laedt laut go-e-Status nicht, sende Startbefehl erneut"),
+statt unveraendert "Laedt direkt" zu behaupten.
+
+Hinweis aus der Praxis, unabhaengig von obigem Fix: manche go-e-Geraete
+haben zusaetzlich eigene "Lademodi" (Eco/Basic/Tagesausflug, ueber "Mode"
+in der go-e-App waehlbar) - steht dort kein Modus fest ausgewaehlt
+("Tippe auf weiter, um mit dem Eco-Modus fortzufahren"), kann das
+Ladegeraet unabhaengig von `frc`/`amp`/`psm` auf eine Bestaetigung in der
+App warten. Falls trotz dieses Fixes weiterhin nicht geladen wird, lohnt
+sich zusaetzlich ein Blick in die go-e-App, ob dort ein Lademodus aktiv
+ist.
 
 ### Guenstigstrom-Laden
 
