@@ -47,6 +47,7 @@ from .const import (
     PV_CONTROL_MODE_DIRECT,
     PV_DIRECT_PHASE_SWITCH_HYSTERESIS_W,
     PV_DIRECT_REASSERT_INTERVAL_SECONDS,
+    PV_DIRECT_STOP_REASSERT_INTERVAL_SECONDS,
     SIGNAL_PV_DIRECT_STATUS_UPDATE,
 )
 from .goe_client import GoEClient
@@ -218,13 +219,17 @@ class PvDirectController:
             self._zoe_controller.force_off_active if self._zoe_controller is not None else False
         )
 
-        # Only relevant (and only fetched) while we actually believe we're
-        # driving a charge - see pv_direct_logic.py's module docstring for
-        # why this matters: without it, a car that stopped drawing current
-        # for any reason we didn't request would have its last-requested
-        # amp/phase phantom-added into the surplus forever.
+        # Fetched while we believe we're driving a charge for
+        # pv_direct_logic.py's assumed-draw sanity check (see its module
+        # docstring): without it, a car that stopped drawing current for
+        # any reason we didn't request would have its last-requested
+        # amp/phase phantom-added into the surplus forever. Also fetched
+        # (see below) while we believe charging is already stopped, to
+        # catch the symmetric problem: a stop that silently didn't take
+        # effect on go-e's side, which would otherwise go unnoticed and
+        # keep pulling grid power indefinitely - reported in practice.
         car_actually_charging = None
-        if self._charging_active:
+        if self._charging_active or (self._pv.enabled and not zoe_force_off):
             car_actually_charging = await self._read_car_actually_charging()
 
         result = evaluate(
@@ -286,6 +291,31 @@ class PvDirectController:
             attempt_stall_reassert = True
         elif car_actually_charging is not False:
             self._frc_reasserted_for_stall = False
+
+        # Symmetric to the above, reported in practice: once this feature
+        # believes it already stopped the car (surplus dropped below the
+        # minimum, sent frc=Off), it never checked again whether go-e
+        # actually stopped drawing current - a stop that silently didn't
+        # take effect would then pull grid power indefinitely with nothing
+        # ever re-sending "stop". Retried much more often than the
+        # frc=On stall guard above (PV_DIRECT_STOP_REASSERT_INTERVAL_SECONDS,
+        # not edge-triggered) since this actively costs money for as long
+        # as it goes unnoticed, and a resent frc=Off is a plain, low-risk
+        # command (unlike psm - see the bugfix above). Only while this
+        # feature is actually the one that should be deciding frc at all
+        # (enabled, not deferring to the Auto charge limit's own stop).
+        if (
+            self._pv.enabled
+            and not zoe_force_off
+            and not result.charging_active
+            and car_actually_charging is True
+            and (
+                self._last_applied_at is None
+                or (time.monotonic() - self._last_applied_at)
+                >= PV_DIRECT_STOP_REASSERT_INTERVAL_SECONDS
+            )
+        ):
+            result = replace(result, action=ACTION_STOP)
 
         self.last_computed_values = {
             "available_power_w": result.available_power_w,

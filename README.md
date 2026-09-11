@@ -427,6 +427,25 @@ seitdem startet "Direkte Steuerung" zuverlaessig von selbst, ganz ohne
 weiteres manuelles Eingreifen. Zugriffskontrolle ("Frei") und ein
 Zeitplan/Ladeplan am go-e waren in diesem Fall nicht die Ursache.
 
+**Bugfix (v0.8.4) - Ladung wird bei sinkendem Ueberschuss nicht reduziert/
+gestoppt:** ebenfalls in der Praxis beobachtet, spiegelbildlich zu den
+obigen Fixes: sobald diese Funktion glaubt, die Ladung bereits gestoppt zu
+haben (Ueberschuss unter das Minimum gefallen, `frc=Off` gesendet), wurde
+nie wieder geprueft, ob go-e das tatsaechlich umgesetzt hat. Blieb ein
+Stop-Befehl aus welchem Grund auch immer wirkungslos (derselbe
+Problemkreis wie ein sich selbst zuruecksetzendes `frc`), zog der go-e
+unbemerkt und unbegrenzt weiter Strom aus dem Netz - beobachtet beim
+Sonnenuntergang: der Statustext zeigte korrekt "Ueberschuss -2409 W <
+Minimum 1380 W - keine Ladung", trotzdem floss die Leistung fuer die Zoe
+ungebremst weiter. Der go-e-Ladezustand (`car`-Feld) wird jetzt nicht mehr
+nur waehrend einer laufenden Ladung abgefragt, sondern immer, solange
+diese Funktion aktiv ist und nicht dem Auto-Ladelimit weicht - bestaetigt
+er weiterhin "laedt", obwohl gestoppt werden sollte, wird `frc=Off` erneut
+gesendet. Anders als beim `frc=On`-Fix oben nicht nur einmalig, sondern
+alle 15 Sekunden erneut, solange die Diskrepanz bestehen bleibt - ein
+uebersehener Stop kostet aktiv Geld, ein wiederholtes `frc=Off` ist ein
+einfacher, risikoarmer Befehl (anders als `psm`).
+
 ### Guenstigstrom-Laden
 
 Zwei unabhaengige taegliche Rhythmen steuern dieses Feature:

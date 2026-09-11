@@ -86,6 +86,17 @@ PV_DIRECT_PHASE_SWITCH_HYSTERESIS_W = 400
 # feature believes it last set.
 PV_DIRECT_REASSERT_INTERVAL_SECONDS = 240
 
+# Reported in practice: symmetric gap to the above - once this feature
+# believes charging is already stopped (surplus dropped below the
+# minimum), it never checked again whether go-e actually stopped drawing
+# current, so a stop that silently didn't take effect (same family of
+# issue as frc apparently reverting on its own) could pull grid power
+# indefinitely with nothing re-sending "stop". Checked/retried far more
+# often than the 240 s above (see pv_direct_controller.py) since this
+# scenario actively costs money for as long as it goes unnoticed - a
+# resent frc=Off is a plain, low-risk command, unlike psm.
+PV_DIRECT_STOP_REASSERT_INTERVAL_SECONDS = 15
+
 PV_CONTROL_MODE_SEND_VALUES = "send_values"
 PV_CONTROL_MODE_DIRECT = "direct"
 DEFAULT_PV_CONTROL_MODE = PV_CONTROL_MODE_SEND_VALUES
