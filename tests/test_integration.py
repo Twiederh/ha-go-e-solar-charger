@@ -214,7 +214,12 @@ async def test_pv_surplus_push_flow(hass, enable_custom_integrations):
         assert attrs["gesendet_pGrid"] == 0
         assert attrs["gesendet_pAkku"] == 0
 
-        # cross the threshold -> real values pushed
+        # cross the threshold, but export is still only 200 W - far below
+        # the 1380 W (6 A / 230 V) minimum go-e can do anything useful
+        # with. Reported in practice: this used to forward the real (tiny)
+        # values regardless, and go-e started charging on essentially no
+        # surplus at all - zeros must still be sent here, just like below
+        # the SoC threshold.
         hass.states.async_set(PV_SOC_ENTITY, "70")
         await hass.async_block_till_done()
         await hass.services.async_call(
@@ -224,12 +229,25 @@ async def test_pv_surplus_push_flow(hass, enable_custom_integrations):
             blocking=True,
         )
         await hass.async_block_till_done()
-        assert mock_push.call_args.args[0] == {"pPv": 3000.0, "pGrid": -200.0, "pAkku": -500.0}
+        assert mock_push.call_args.args[0] == {"pPv": 0, "pGrid": 0, "pAkku": 0}
+        assert "keine PV-Freigabe" in _state(hass, f"sensor.{DEVICE_SLUG}_pv_freigabe_status")
+
+        # export rises well above the minimum -> real values now pushed.
+        hass.states.async_set(PV_GRID_ENTITY, "-2000")
+        await hass.async_block_till_done()
+        await hass.services.async_call(
+            "button",
+            "press",
+            {"entity_id": f"button.{DEVICE_SLUG}_pv_jetzt_senden"},
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+        assert mock_push.call_args.args[0] == {"pPv": 3000.0, "pGrid": -2000.0, "pAkku": -500.0}
         assert "PV-Werte gesendet" in _state(hass, f"sensor.{DEVICE_SLUG}_pv_freigabe_status")
 
         attrs = hass.states.get(f"sensor.{DEVICE_SLUG}_pv_freigabe_status").attributes
         assert attrs["gesendet_pPv"] == 3000.0
-        assert attrs["gesendet_pGrid"] == -200.0
+        assert attrs["gesendet_pGrid"] == -2000.0
         assert attrs["gesendet_pAkku"] == -500.0
         assert attrs["letzte_uebertragung"] is not None
 
@@ -324,7 +342,7 @@ async def test_pv_keepalive_resends_without_sensor_change(hass, enable_custom_in
 
     hass.states.async_set(PV_SOC_ENTITY, "70")  # above the 50 % threshold
     hass.states.async_set(PV_SOLAR_ENTITY, "3000")
-    hass.states.async_set(PV_GRID_ENTITY, "-200")
+    hass.states.async_set(PV_GRID_ENTITY, "-2000")  # comfortably above the 1380 W minimum
     hass.states.async_set(PV_BATTERY_ENTITY, "-500")
 
     with patch(
@@ -343,7 +361,7 @@ async def test_pv_keepalive_resends_without_sensor_change(hass, enable_custom_in
 
         calls_after_setup = mock_push.call_count
         assert calls_after_setup >= 1
-        assert mock_push.call_args.args[0] == {"pPv": 3000.0, "pGrid": -200.0, "pAkku": -500.0}
+        assert mock_push.call_args.args[0] == {"pPv": 3000.0, "pGrid": -2000.0, "pAkku": -500.0}
 
         # No sensor changes at all - just let the keep-alive timer fire.
         async_fire_time_changed(
@@ -352,7 +370,7 @@ async def test_pv_keepalive_resends_without_sensor_change(hass, enable_custom_in
         await hass.async_block_till_done()
 
         assert mock_push.call_count > calls_after_setup
-        assert mock_push.call_args.args[0] == {"pPv": 3000.0, "pGrid": -200.0, "pAkku": -500.0}
+        assert mock_push.call_args.args[0] == {"pPv": 3000.0, "pGrid": -2000.0, "pAkku": -500.0}
 
 
 @pytest.mark.asyncio
