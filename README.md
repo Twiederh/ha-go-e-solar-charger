@@ -298,6 +298,15 @@ die separate "PV Sofort-Freigabe ab Einspeisung"-Schwelle (Standard
 3100 W), werden die echten Werte trotzdem gesendet, statt den Ueberschuss
 verpuffen zu lassen.
 
+Zusaetzlich zur Akkustand-Schwelle muss die aktuelle Einspeisung auch den
+gleichen Mindestwert erreichen, den "PV Direktsteuerung" unten verwendet
+(6 A * 230 V = 1380 W) - sonst werden ebenfalls Nullen statt der echten
+Werte gesendet (siehe Bugfix v0.8.6 unten). Ohne diese Grenze wuerde auch
+eine voellig unzureichende Einspeisung (z. B. nur 200 W) als echter Wert
+an go-e weitergereicht, und go-es eigener PV-Ueberschuss-Algorithmus laesst
+sich darauf nicht verlassen, eine derart geringe Menge von selbst
+abzulehnen.
+
 Der go-e erwartet diese Werte mindestens alle 5 Sekunden aktualisiert -
 kommt laenger nichts an, geht er davon aus, dass die PV-Quelle weg ist,
 und pausiert das Laden als Sicherheitsmassnahme. Deshalb sendet die
@@ -457,7 +466,7 @@ hergeben konnte. Ursache ist eine dritte Luecke in derselben "angenommene
 Ladeleistung"-Rueckkopplung wie bei den Fixes oben: die zuletzt an den
 go-e gesendete Ampere-/Phasenvorgabe wird so lange als tatsaechlich
 fliessend angenommen, wie go-e bestaetigt, dass ueberhaupt geladen wird -
-laedt das Auto aber (z. B. durch die eigene, mit steigendem Akkustand
+ladet das Auto aber (z. B. durch die eigene, mit steigendem Akkustand
 flacher werdende Ladekurve nahe voll) tatsaechlich mit *weniger* als
 zuletzt vorgegeben, kann eine reine Ja/Nein-Abfrage ("laedt gerade?") das
 gar nicht erkennen - nur eine echte Leistungsmessung kann das. Diese
@@ -474,6 +483,25 @@ automatisch auf die bisherige Ampere-mal-Phasen-Annahme zurueck, statt die
 Ladung deswegen faelschlich zu drosseln oder zu stoppen. Der gemessene
 Wert ist jetzt auch als neues Sensor-Attribut `echte_ladeleistung_w`
 sichtbar (siehe "Erzeugte Entities" oben).
+
+**Bugfix (v0.8.6) - Laden startet trotz unzureichender PV-Leistung:**
+gemeldet fuer "PV-Ueberschuss-Freigabe" (Werte senden): sobald der
+Akkustand der Powerwall die eingestellte Schwelle erreichte, wurden die
+echten `pPv`/`pGrid`/`pAkku`-Werte an go-e geschickt, ganz gleich wie
+gering die tatsaechliche Einspeisung dabei war - selbst 200 W (weit unter
+dem, was go-e ueberhaupt sinnvoll zum Laden nutzen kann) wurden
+weitergereicht, und go-es eigener PV-Ueberschuss-Algorithmus begann
+darauf trotzdem zu laden, statt die zu geringe Menge von selbst
+abzulehnen. Die Akkustand-Schwelle war also die einzige Bedingung fuer
+"echte Werte senden" - die tatsaechliche Einspeisungshoehe floss gar
+nicht in die Entscheidung ein. "PV-Ueberschuss-Freigabe" prueft jetzt
+zusaetzlich denselben 1380-W-Mindestwert (6 A * 230 V), den "PV
+Direktsteuerung" schon vorher verwendet hat (siehe oben) - erst wenn
+*beide* Bedingungen erfuellt sind (Akkustand UND Mindest-Einspeisung),
+werden echte Werte gesendet; sonst weiterhin Nullen, exakt wie bei zu
+niedrigem Akkustand. "PV Direktsteuerung" hatte diesen Mindestwert bereits
+von Anfang an korrekt als eigene Stop-Bedingung implementiert und war von
+diesem Bugfix nicht betroffen.
 
 ### Guenstigstrom-Laden
 
