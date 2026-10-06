@@ -14,6 +14,22 @@ while still below its own SoC threshold - e.g. around midday in summer,
 to avoid sitting at 100 % for too long. Once that export exceeds a
 configurable override threshold, real values are forwarded anyway rather
 than wasting the surplus.
+
+Reported in practice: the SoC gate above was the *only* condition ever
+checked before forwarding real values - once the Powerwall was at/above
+its threshold, whatever pPv/pGrid/pAkku currently read got sent through
+unconditionally, with no check at all on whether there was actually
+enough surplus to charge from. go-e's own PV-surplus algorithm apparently
+doesn't reliably refuse a near-zero/negative surplus on its own either
+(same lesson as pv_direct_logic.py's module docstring about not trusting
+go-e's own logic to behave conservatively) - it was observed to start
+charging the car even while the house was, net, not exporting anything
+worth mentioning. Real values are therefore now only forwarded once the
+export also clears MIN_SURPLUS_W (the same 6 A/230 V single-phase floor
+pv_direct_logic.py uses - the smallest amount go-e can do anything useful
+with); below that, zeros are sent instead, exactly like the SoC-below-
+threshold case above, even though the SoC condition on its own would have
+allowed real values through.
 """
 from dataclasses import dataclass
 from typing import Optional
@@ -24,6 +40,12 @@ from typing import Optional
 # purely from grid-meter noise - the override decision itself still
 # compares against the unrounded value.
 _DISPLAY_ROUNDING_W = 100
+
+# Same floor as pv_direct_logic.py's MIN_AMP * VOLTAGE_V (6 A on a single
+# phase) - below this, go-e can't usefully do anything with the surplus
+# anyway, so there's no point forwarding real values and letting go-e's
+# own algorithm decide (see module docstring).
+MIN_SURPLUS_W = 6 * 230
 
 
 def _rounded_w(value: float) -> float:
@@ -79,12 +101,34 @@ def evaluate(state: PvPushInput) -> PvPushResult:
     if state.solar_w is None or state.grid_w is None or state.battery_w is None:
         return PvPushResult("Leistungswerte der Powerwall nicht verfuegbar", None)
 
+    # Reported in practice: neither branch below used to check this at all -
+    # whatever the SoC/export-override gate decided, the *current* export
+    # amount was irrelevant to whether real values got sent. See module
+    # docstring: go-e's own algorithm can't be trusted to politely decline a
+    # near-zero/negative surplus just because it was handed one.
+    insufficient_surplus = export_w is None or export_w < MIN_SURPLUS_W
+
     if export_override:
+        if insufficient_surplus:
+            return PvPushResult(
+                f"Einspeisung {_rounded_w(export_w):.0f} W < Minimum {MIN_SURPLUS_W:.0f} W "
+                f"(trotz Akkustand {state.powerwall_soc:.0f} % < {state.threshold:.0f} %) "
+                "- keine PV-Freigabe an go-e",
+                {PPV_KEY: 0, PGRID_KEY: 0, PAKKU_KEY: 0},
+            )
         return PvPushResult(
             f"Einspeisung {_rounded_w(export_w):.0f} W > {state.export_override_w:.0f} W trotz "
             f"Akkustand {state.powerwall_soc:.0f} % < {state.threshold:.0f} % "
             "- PV-Werte trotzdem gesendet",
             {PPV_KEY: state.solar_w, PGRID_KEY: state.grid_w, PAKKU_KEY: state.battery_w},
+        )
+
+    if insufficient_surplus:
+        return PvPushResult(
+            f"Ueberschuss {_rounded_w(export_w):.0f} W < Minimum {MIN_SURPLUS_W:.0f} W "
+            f"(Akkustand {state.powerwall_soc:.0f} % >= {state.threshold:.0f} %) "
+            "- keine PV-Freigabe an go-e",
+            {PPV_KEY: 0, PGRID_KEY: 0, PAKKU_KEY: 0},
         )
 
     return PvPushResult(
