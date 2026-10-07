@@ -5,9 +5,7 @@ Idea: only hand the go-e Charger's PV-surplus-charging algorithm (pPv/
 pGrid/pAkku, see goe_client.push_pv_values) real numbers once the
 Powerwall's own battery has reached a configurable state of charge -
 below that, the house battery should fill up first rather than solar
-surplus going straight into the car. Below the threshold we explicitly
-push zeros instead of just staying silent, so go-e can't keep charging
-off stale numbers from before the threshold was crossed downward.
+surplus going straight into the car.
 
 Exception: the Powerwall itself sometimes exports a lot of power even
 while still below its own SoC threshold - e.g. around midday in summer,
@@ -27,9 +25,24 @@ charging the car even while the house was, net, not exporting anything
 worth mentioning. Real values are therefore now only forwarded once the
 export also clears MIN_SURPLUS_W (the same 6 A/230 V single-phase floor
 pv_direct_logic.py uses - the smallest amount go-e can do anything useful
-with); below that, zeros are sent instead, exactly like the SoC-below-
-threshold case above, even though the SoC condition on its own would have
-allowed real values through.
+with).
+
+Below the threshold (or once the surplus is insufficient), earlier
+versions explicitly pushed zeros instead of just staying silent, on the
+theory that go-e might otherwise keep charging off stale real numbers
+from before the surplus disappeared. Reported in practice, that didn't
+work either: with zeros being actively (re-)sent every
+PV_PUSH_KEEPALIVE_INTERVAL_SECONDS, go-e kept an already-running charge
+going regardless - its own PV-surplus algorithm apparently treats "a
+fresh reading of 0 W" as just another surplus value to ramp towards
+(presumably floored at its own hardware minimum current) rather than a
+stop signal. go-e *is* documented and relied upon elsewhere (see
+PV_PUSH_KEEPALIVE_INTERVAL_SECONDS's own comment) to pause charging as a
+safety fallback once it hasn't seen an ids update for a few seconds - so
+the integration now instead sends nothing at all whenever the surplus
+isn't sufficient (SoC below threshold, or export below MIN_SURPLUS_W),
+and lets that existing staleness safeguard do the actual stopping,
+instead of hoping go-e reacts to an explicit 0/0/0.
 """
 from dataclasses import dataclass
 from typing import Optional
@@ -72,9 +85,10 @@ class PvPushInput:
 @dataclass
 class PvPushResult:
     status_text: str
-    # None means "don't call go-e this cycle" (feature disabled or a source
-    # value is missing) - as opposed to an explicit zeroed push, which is a
-    # deliberate "no surplus available" signal.
+    # None means "don't call go-e this cycle at all" - feature disabled, a
+    # source value missing, or (see module docstring) surplus insufficient:
+    # go-e's own ids-staleness safety pause is what actually stops the
+    # charge in that last case, not an explicit zeroed push.
     values: Optional[dict]
 
 
@@ -95,7 +109,7 @@ def evaluate(state: PvPushInput) -> PvPushResult:
         return PvPushResult(
             f"Akkustand {state.powerwall_soc:.0f} % < {state.threshold:.0f} % "
             "- keine PV-Freigabe an go-e",
-            {PPV_KEY: 0, PGRID_KEY: 0, PAKKU_KEY: 0},
+            None,
         )
 
     if state.solar_w is None or state.grid_w is None or state.battery_w is None:
@@ -114,7 +128,7 @@ def evaluate(state: PvPushInput) -> PvPushResult:
                 f"Einspeisung {_rounded_w(export_w):.0f} W < Minimum {MIN_SURPLUS_W:.0f} W "
                 f"(trotz Akkustand {state.powerwall_soc:.0f} % < {state.threshold:.0f} %) "
                 "- keine PV-Freigabe an go-e",
-                {PPV_KEY: 0, PGRID_KEY: 0, PAKKU_KEY: 0},
+                None,
             )
         return PvPushResult(
             f"Einspeisung {_rounded_w(export_w):.0f} W > {state.export_override_w:.0f} W trotz "
@@ -128,7 +142,7 @@ def evaluate(state: PvPushInput) -> PvPushResult:
             f"Ueberschuss {_rounded_w(export_w):.0f} W < Minimum {MIN_SURPLUS_W:.0f} W "
             f"(Akkustand {state.powerwall_soc:.0f} % >= {state.threshold:.0f} %) "
             "- keine PV-Freigabe an go-e",
-            {PPV_KEY: 0, PGRID_KEY: 0, PAKKU_KEY: 0},
+            None,
         )
 
     return PvPushResult(
