@@ -161,9 +161,10 @@ sie sind.)
   `gelesen_powerwall_soc` zeigen die zuletzt von den konfigurierten
   Powerwall-Sensoren gelesenen Rohwerte, `gesendet_pPv` / `gesendet_pGrid`
   / `gesendet_pAkku` das tatsaechlich zuletzt an go-e geschickte
-  "ids"-Paket (0/0/0, wenn unterhalb der Schwelle sicherheitshalber
-  Nullen gesendet wurden) und `letzte_uebertragung` den Zeitpunkt der
-  letzten erfolgreichen Uebertragung.
+  "ids"-Paket (`None`, solange nicht genug Ueberschuss da ist und deshalb
+  ueberhaupt nichts gesendet wird - siehe Bugfix v0.8.7 unten) und
+  `letzte_uebertragung` den Zeitpunkt der letzten erfolgreichen
+  Uebertragung.
 - `button.<name>_pv_jetzt_senden` - schickt die aktuell berechneten Werte
   sofort, praktisch zum Testen der go-e-Verbindung, ohne auf die naechste
   Sensor-Aenderung oder den Keep-Alive-Tick zu warten.
@@ -285,9 +286,8 @@ frei von Home-Assistant-Importen, damit sie isoliert testbar ist.
 ### PV-Ueberschuss-Freigabe
 
 Solange der Akkustand der Powerwall unter der eingestellten Schwelle
-liegt, werden `pPv`, `pGrid` und `pAkku` als `0` an den go-e geschickt -
-Sicherheits-Voreinstellung, damit der go-e nicht mit veralteten/falschen
-PV-Werten weiterlaedt. Erreicht oder ueberschreitet der Akkustand die
+liegt, wird gar nichts an den go-e geschickt (siehe Bugfix v0.8.7 unten
+fuer die Begruendung). Erreicht oder ueberschreitet der Akkustand die
 Schwelle, werden die echten Momentanwerte per `GET
 http://<go-e>/api/set?ids={"pPv":...,"pGrid":...,"pAkku":...}` gesendet.
 
@@ -300,7 +300,7 @@ verpuffen zu lassen.
 
 Zusaetzlich zur Akkustand-Schwelle muss die aktuelle Einspeisung auch den
 gleichen Mindestwert erreichen, den "PV Direktsteuerung" unten verwendet
-(6 A * 230 V = 1380 W) - sonst werden ebenfalls Nullen statt der echten
+(6 A * 230 V = 1380 W) - sonst wird ebenfalls nichts statt der echten
 Werte gesendet (siehe Bugfix v0.8.6 unten). Ohne diese Grenze wuerde auch
 eine voellig unzureichende Einspeisung (z. B. nur 200 W) als echter Wert
 an go-e weitergereicht, und go-es eigener PV-Ueberschuss-Algorithmus laesst
@@ -312,9 +312,12 @@ kommt laenger nichts an, geht er davon aus, dass die PV-Quelle weg ist,
 und pausiert das Laden als Sicherheitsmassnahme. Deshalb sendet die
 Integration nicht nur bei jeder Aenderung der Quell-Sensoren, sondern
 zusaetzlich alle 4 Sekunden erneut (`PV_PUSH_KEEPALIVE_INTERVAL_SECONDS`),
-auch wenn sich die Werte gar nicht geaendert haben. Die reine
-Entscheidungslogik steckt in `pv_logic.py`, frei von
-Home-Assistant-Importen.
+auch wenn sich die Werte gar nicht geaendert haben, solange genug
+Ueberschuss da ist. Genau diese eingebaute Sicherheitspause ist es auch,
+die das Laden tatsaechlich beendet, sobald nicht mehr genug Ueberschuss da
+ist (siehe Bugfix v0.8.7) - die Integration greift hierfuer nicht selbst
+aktiv per `frc` ein. Die reine Entscheidungslogik steckt in `pv_logic.py`,
+frei von Home-Assistant-Importen.
 
 ### PV Direktsteuerung
 
@@ -499,9 +502,36 @@ zusaetzlich denselben 1380-W-Mindestwert (6 A * 230 V), den "PV
 Direktsteuerung" schon vorher verwendet hat (siehe oben) - erst wenn
 *beide* Bedingungen erfuellt sind (Akkustand UND Mindest-Einspeisung),
 werden echte Werte gesendet; sonst weiterhin Nullen, exakt wie bei zu
-niedrigem Akkustand. "PV Direktsteuerung" hatte diesen Mindestwert bereits
+niedrigem Akkustand (siehe Bugfix v0.8.7 unten fuer eine weitere
+Verfeinerung davon). "PV Direktsteuerung" hatte diesen Mindestwert bereits
 von Anfang an korrekt als eigene Stop-Bedingung implementiert und war von
 diesem Bugfix nicht betroffen.
+
+**Bugfix (v0.8.7) - Ladung laeuft trotz gesendeter Nullen einfach weiter:**
+gemeldet fuer "PV-Ueberschuss-Freigabe" (Werte senden), unmittelbar nach
+v0.8.6: der Sensor zeigte korrekt "Ueberschuss 0 W < Minimum 1380 W ...
+keine PV-Freigabe an go-e" und die Nullen wurden auch nachweislich alle
+4 Sekunden an go-e gesendet (`gesendet_pPv`/`gesendet_pGrid`/
+`gesendet_pAkku` standen auf `0`) - trotzdem lud das Auto munter weiter.
+go-es eigener PV-Ueberschuss-Algorithmus behandelt eine frisch gesendete
+"0 W Ueberschuss" offenbar einfach wie jeden anderen Ueberschusswert, auf
+den er hinregelt (vermutlich nach unten limitiert auf seinen eigenen
+Mindest-Ladestrom), statt das als Stoppsignal zu werten - exakt dieselbe
+Lektion wie bei allen vorherigen Bugfixes an dieser Stelle: go-es eigene
+Logik laesst sich nicht darauf verlassen, sich von selbst vernuenftig zu
+verhalten, diesmal auch nicht bei einer explizit gesendeten Null.
+Verlaesslich ist dagegen die in `PV_PUSH_KEEPALIVE_INTERVAL_SECONDS`
+dokumentierte eigene Sicherheitsfunktion des go-e: bekommt er laenger als
+rund 5 Sekunden ueberhaupt keine `ids`-Aktualisierung, geht er davon aus,
+dass die PV-Quelle weg ist, und pausiert das Laden von sich aus. Die
+Integration sendet daher jetzt bei unzureichendem Ueberschuss (egal ob
+wegen zu niedrigem Akkustand oder zu geringer Einspeisung) ueberhaupt
+nichts mehr an go-e, statt wie zuvor aktiv Nullen zu schicken, und
+verlaesst sich fuer das tatsaechliche Stoppen auf diese eingebaute
+Sicherheitspause. Die urspruengliche Befuerchtung, ohne aktives Senden
+koennte go-e einfach mit den letzten echten (veralteten) Werten
+weiterladen, hat sich damit als unbegruendet erwiesen - genau dafuer gibt
+es ja die 5-Sekunden-Zeitueberschreitung.
 
 ### Guenstigstrom-Laden
 
