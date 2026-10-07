@@ -194,31 +194,32 @@ async def test_pv_surplus_push_flow(hass, enable_custom_integrations):
         assert hass.states.get(f"sensor.{DEVICE_SLUG}_pv_freigabe_status") is not None
         assert hass.states.get(f"button.{DEVICE_SLUG}_pv_jetzt_senden") is not None
 
-        # below threshold -> zeros pushed, not the real 3000/-200/-500
-        assert mock_push.call_count >= 1
-        assert mock_push.call_args.args[0] == {"pPv": 0, "pGrid": 0, "pAkku": 0}
+        # below threshold -> nothing pushed at all, not the real
+        # 3000/-200/-500 and not an explicit zeroed push either (see
+        # pv_logic.py's module docstring - go-e's own ids-staleness safety
+        # pause is what's relied on to actually stop a charge here).
+        assert mock_push.call_count == 0
         assert "keine PV-Freigabe" in _state(hass, f"sensor.{DEVICE_SLUG}_pv_freigabe_status")
 
         # the sensor's attributes must show both what was actually read
-        # from the source sensors (the real 3000/-200/-500/30) and what
-        # was actually sent (the safety zeros) - so a mismatch between
-        # "what go-e should be getting" and "what it's really getting" can
-        # be checked directly in the UI instead of just trusting the
-        # status text.
+        # from the source sensors (the real 3000/-200/-500/30) and that
+        # nothing was actually sent - so a mismatch between "what go-e
+        # should be getting" and "what it's really getting" can be checked
+        # directly in the UI instead of just trusting the status text.
         attrs = hass.states.get(f"sensor.{DEVICE_SLUG}_pv_freigabe_status").attributes
         assert attrs["gelesen_solar_w"] == 3000.0
         assert attrs["gelesen_netz_w"] == -200.0
         assert attrs["gelesen_akku_w"] == -500.0
         assert attrs["gelesen_powerwall_soc"] == 30.0
-        assert attrs["gesendet_pPv"] == 0
-        assert attrs["gesendet_pGrid"] == 0
-        assert attrs["gesendet_pAkku"] == 0
+        assert attrs["gesendet_pPv"] is None
+        assert attrs["gesendet_pGrid"] is None
+        assert attrs["gesendet_pAkku"] is None
 
         # cross the threshold, but export is still only 200 W - far below
         # the 1380 W (6 A / 230 V) minimum go-e can do anything useful
         # with. Reported in practice: this used to forward the real (tiny)
         # values regardless, and go-e started charging on essentially no
-        # surplus at all - zeros must still be sent here, just like below
+        # surplus at all - nothing must still be sent here, just like below
         # the SoC threshold.
         hass.states.async_set(PV_SOC_ENTITY, "70")
         await hass.async_block_till_done()
@@ -229,10 +230,13 @@ async def test_pv_surplus_push_flow(hass, enable_custom_integrations):
             blocking=True,
         )
         await hass.async_block_till_done()
-        assert mock_push.call_args.args[0] == {"pPv": 0, "pGrid": 0, "pAkku": 0}
+        assert mock_push.call_count == 0
         assert "keine PV-Freigabe" in _state(hass, f"sensor.{DEVICE_SLUG}_pv_freigabe_status")
 
-        # export rises well above the minimum -> real values now pushed.
+        # export rises well above the minimum -> real values now pushed,
+        # for the first time in this test (both the sensor-change event and
+        # the button press below each trigger their own evaluation, so two
+        # calls are expected here, not one).
         hass.states.async_set(PV_GRID_ENTITY, "-2000")
         await hass.async_block_till_done()
         await hass.services.async_call(
@@ -242,6 +246,7 @@ async def test_pv_surplus_push_flow(hass, enable_custom_integrations):
             blocking=True,
         )
         await hass.async_block_till_done()
+        assert mock_push.call_count > 0
         assert mock_push.call_args.args[0] == {"pPv": 3000.0, "pGrid": -2000.0, "pAkku": -500.0}
         assert "PV-Werte gesendet" in _state(hass, f"sensor.{DEVICE_SLUG}_pv_freigabe_status")
 
@@ -252,7 +257,9 @@ async def test_pv_surplus_push_flow(hass, enable_custom_integrations):
         assert attrs["letzte_uebertragung"] is not None
 
         # lower the threshold above the current SoC again via the number
-        # entity -> back to zeros
+        # entity -> back to sending nothing (not a fresh call at all - the
+        # stale call_args above is still from the last real push).
+        calls_before = mock_push.call_count
         await hass.services.async_call(
             "number",
             "set_value",
@@ -260,7 +267,9 @@ async def test_pv_surplus_push_flow(hass, enable_custom_integrations):
             blocking=True,
         )
         await hass.async_block_till_done()
-        assert mock_push.call_args.args[0] == {"pPv": 0, "pGrid": 0, "pAkku": 0}
+        assert mock_push.call_count == calls_before
+        attrs = hass.states.get(f"sensor.{DEVICE_SLUG}_pv_freigabe_status").attributes
+        assert attrs["gesendet_pPv"] is None
 
         # disabling the switch stops pushing anything at all
         await hass.services.async_call(
@@ -478,15 +487,28 @@ async def test_cheap_daily_cycle_and_pv_suppression(hass, enable_custom_integrat
         await hass.async_block_till_done()
 
         # Next midnight: rollover the other way -> switch back on, PV
-        # pushes resume, and charging is not forced (no low-solar day).
+        # suppression lifts, and charging is not forced (no low-solar day).
         hass.states.async_set(CHEAP_PRICE_ENTITY, CHEAP_PRICE_CHEAP)
         await hass.async_block_till_done()
 
         assert mock_set_switch.call_args.args == (True,)
         assert mock_force_on.call_count == 1  # unchanged - not forced again
 
+        # No longer suppressed - back to its own normal gating (still
+        # nothing actually pushed here, since this test's PV_GRID_ENTITY
+        # stays at only -200 W throughout, well below the 1380 W minimum -
+        # the point is just that it's evaluating its own decision again
+        # rather than being force-paused by cheap-grid-charging).
         await pv_controller.async_evaluate()
-        assert mock_push.call_count >= 1
+        assert "Pausiert" not in pv_controller.status_text
+        assert mock_push.call_count == pushes_before_suppression
+
+        # Raising the export comfortably above the minimum confirms PV
+        # pushing has genuinely resumed, not just that the status text
+        # changed wording.
+        hass.states.async_set(PV_GRID_ENTITY, "-2000")
+        await hass.async_block_till_done()
+        assert mock_push.call_count > pushes_before_suppression
 
 
 @pytest.mark.asyncio
@@ -622,14 +644,22 @@ async def test_pv_export_override_pushes_despite_low_soc(hass, enable_custom_int
 
         # below threshold, but exporting well above the override -> real
         # values sent anyway.
+        assert mock_push.call_count == 1
         assert mock_push.call_args.args[0] == {"pPv": 3500.0, "pGrid": -3500.0, "pAkku": -500.0}
         assert "trotzdem gesendet" in _state(hass, f"sensor.{DEVICE_SLUG}_pv_freigabe_status")
 
         # export drops back below the override, still below SoC threshold
-        # -> back to the zeroed safety values.
+        # -> back to sending nothing at all (see pv_logic.py's module
+        # docstring for why this is no longer an explicit zeroed push) -
+        # call_count must not move, and the sensor attribute must now read
+        # None rather than the stale real values still sitting in
+        # call_args from the call above.
+        calls_before = mock_push.call_count
         hass.states.async_set(PV_GRID_ENTITY, "-1000")
         await hass.async_block_till_done()
-        assert mock_push.call_args.args[0] == {"pPv": 0, "pGrid": 0, "pAkku": 0}
+        assert mock_push.call_count == calls_before
+        attrs = hass.states.get(f"sensor.{DEVICE_SLUG}_pv_freigabe_status").attributes
+        assert attrs["gesendet_pPv"] is None
 
         # raising the override threshold itself also takes effect
         # immediately, same as the other number entities.
@@ -637,6 +667,7 @@ async def test_pv_export_override_pushes_despite_low_soc(hass, enable_custom_int
         await hass.async_block_till_done()
         assert mock_push.call_args.args[0] == {"pPv": 3500.0, "pGrid": -3500.0, "pAkku": -500.0}
 
+        calls_before = mock_push.call_count
         await hass.services.async_call(
             "number",
             "set_value",
@@ -647,7 +678,9 @@ async def test_pv_export_override_pushes_despite_low_soc(hass, enable_custom_int
             blocking=True,
         )
         await hass.async_block_till_done()
-        assert mock_push.call_args.args[0] == {"pPv": 0, "pGrid": 0, "pAkku": 0}
+        assert mock_push.call_count == calls_before
+        attrs = hass.states.get(f"sensor.{DEVICE_SLUG}_pv_freigabe_status").attributes
+        assert attrs["gesendet_pPv"] is None
 
 
 @pytest.mark.asyncio
@@ -1065,7 +1098,7 @@ async def test_cheap_disable_hands_back_both_cars(hass, enable_custom_integratio
     ) as mock_release, patch(
         "custom_components.go_e_solar_charger.goe_client.GoEClient.force_charging_on",
         new=AsyncMock(),
-    ), patch(
+    ) as mock_force_on, patch(
         "custom_components.go_e_solar_charger.goe_client.GoEClient.push_pv_values",
         new=AsyncMock(),
     ), patch(
